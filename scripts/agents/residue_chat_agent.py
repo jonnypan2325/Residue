@@ -32,6 +32,8 @@ from datetime import datetime
 from uuid import uuid4
 from pathlib import Path
 
+import requests as http_requests
+
 # Load .env from project root
 project_root = Path(__file__).parent.parent.parent
 env_file = project_root / ".env"
@@ -143,7 +145,39 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
 
     ctx.logger.info(f"User query: {text[:100]}...")
 
+    # Attempt to enrich the user prompt with orchestrator context
+    orchestrator_context = ""
+    try:
+        orch_resp = http_requests.post(
+            "http://localhost:8765/orchestrate",
+            json={
+                "session_id": str(msg.msg_id),
+                "user_id": sender,
+                "goal_mode": "focus",
+                "acoustic": None,
+                "behavioral": None,
+            },
+            timeout=10,
+        )
+        if orch_resp.status_code == 200:
+            orch_data = orch_resp.json()
+            perception = orch_data.get("perception", {})
+            intervention = orch_data.get("intervention", {})
+            orchestrator_context = (
+                "\n\nCurrent agent system state: "
+                f"cognitive_state={perception.get('cognitive_state', 'unknown')}, "
+                f"confidence={perception.get('confidence', 0)}, "
+                f"reasoning={perception.get('reasoning', '')}, "
+                f"recommended_bed={intervention.get('bed_selection', 'unknown')}, "
+                f"volume_target={intervention.get('volume_target', 0)}, "
+                f"eq_profile={intervention.get('eq_profile', [])}"
+            )
+            ctx.logger.info("Orchestrator context enrichment succeeded")
+    except Exception:
+        ctx.logger.info("Orchestrator unavailable, falling back to direct ASI1-Mini")
+
     # Query ASI1-Mini
+    enriched_text = text + orchestrator_context if orchestrator_context else text
     response_text = (
         "I apologize, but I'm having trouble processing your request right now. "
         "Please try again in a moment."
@@ -153,7 +187,7 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
             model="asi1-mini",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": text},
+                {"role": "user", "content": enriched_text},
             ],
             max_tokens=1024,
             temperature=0.4,

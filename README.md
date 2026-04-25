@@ -236,10 +236,10 @@ The orchestrator exposes an HTTP API on port 8765:
 
 | Deliverable | Status | Link |
 |-------------|--------|------|
-| Agent(s) on Agentverse | Registered | <!-- Add Agentverse profile URL after mailbox creation --> |
-| ASI:One Chat Session | Ready | <!-- Add ASI:One shared chat URL after testing --> |
+| Agent(s) on Agentverse | Registered | Run `python scripts/agents/residue_chat_agent.py`, then create a mailbox at [agentverse.ai](https://agentverse.ai) |
+| ASI:One Chat Session | Ready | Start the chat agent, then open [asi1.ai](https://asi1.ai) → Chat → "Find agents for acoustic intelligence" |
 | GitHub Repo (Public) | This repo | [MaanPatel2005/Residue](https://github.com/MaanPatel2005/Residue) |
-| Demo Video | On Devpost | <!-- Add Devpost demo video link --> |
+| Demo Video | On Devpost | See Devpost submission for demo video link |
 
 **Agent Addresses:**
 - Chat Agent: `agent1qfk077vzrd76yjr37jr2thjjdfmae23w7w9vv44gmp50uug8pv96z00zg0p`

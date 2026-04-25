@@ -149,14 +149,21 @@ PERCEPTION_ADDRESS = os.environ.get("PERCEPTION_AGENT_ADDRESS", "")
 CORRELATION_ADDRESS = os.environ.get("CORRELATION_AGENT_ADDRESS", "")
 INTERVENTION_ADDRESS = os.environ.get("INTERVENTION_AGENT_ADDRESS", "")
 
-agent = Agent(
-    name="residue_orchestrator",
-    port=AGENT_PORT,
-    seed=AGENT_SEED,
-    endpoint=[f"http://localhost:{AGENT_PORT}/submit"],
-)
+agentverse_key = os.environ.get("AGENTVERSE_API_KEY")
+agent_kwargs = {
+    "name": "residue_orchestrator",
+    "port": AGENT_PORT,
+    "seed": AGENT_SEED,
+    "endpoint": [f"http://localhost:{AGENT_PORT}/submit"],
+}
+if agentverse_key:
+    agent_kwargs["mailbox"] = agentverse_key
+    agent_kwargs["publish_agent_details"] = True
+
+agent = Agent(**agent_kwargs)
 
 print(f"OrchestratorAgent address: {agent.address}")
+print(f"Agentverse registration: {'enabled' if agentverse_key else 'disabled'}")
 
 # Store pending responses
 pending_responses: dict[str, dict] = {}
@@ -166,6 +173,7 @@ pending_responses: dict[str, dict] = {}
 async def startup(ctx: Context):
     ctx.logger.info(f"OrchestratorAgent started on port {AGENT_PORT}")
     ctx.logger.info(f"Address: {agent.address}")
+    ctx.logger.info(f"Agentverse: {'active' if agentverse_key else 'not configured'}")
     ctx.logger.info(f"Perception: {PERCEPTION_ADDRESS}")
     ctx.logger.info(f"Correlation: {CORRELATION_ADDRESS}")
     ctx.logger.info(f"Intervention: {INTERVENTION_ADDRESS}")
@@ -520,6 +528,7 @@ if __name__ == "__main__":
     print(f"Orchestrator uAgent: port {AGENT_PORT}")
     print(f"Orchestrator HTTP:   port {HTTP_PORT}")
     print(f"Agent address:       {agent.address}")
+    print(f"Agentverse:          {'enabled' if agentverse_key else 'disabled'}")
     print(f"{'='*50}\n")
 
     agent.run()
