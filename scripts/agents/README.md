@@ -112,8 +112,11 @@ users can discover and confirm compatibility with one another.
 Flow:
 
 1. Client POSTs to `/match` on the orchestrator with `{user_id, top_k}`.
-2. Orchestrator dispatches a `FindMatchesRequest` to the
-   CorrelationAgent (and runs an in-process synchronous fallback).
+2. Orchestrator calls `find_matches_for_user` directly in-process as a
+   synchronous fallback. If `CORRELATION_AGENT_ADDRESS` is configured and
+   a `FindMatchesResponse` has already been received from the CorrelationAgent
+   (via the typed uAgents message bus), that cached result is preferred over
+   the synchronous fallback.
 3. CorrelationAgent A loads its user's profile from MongoDB and runs
    Atlas Vector Search on the `optimalProfile.eqGains` field to find the
    top-K most similar profiles. If Atlas Vector Search isn't configured,
