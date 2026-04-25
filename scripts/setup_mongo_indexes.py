@@ -1,0 +1,132 @@
+"""
+Residue — MongoDB index setup for cross-agent matching.
+
+Creates the `acoustic_profiles` collection (idempotently) and the
+regular indexes needed by the CorrelationAgent's matching workflow.
+
+Atlas Vector Search indexes cannot reliably be created via pymongo on
+all Atlas tiers, so this script prints the JSON definition for the
+`eq_gains` vector index — paste it into the Atlas UI under "Search →
+Create Search Index → JSON Editor" if the auto-creation call fails.
+
+Usage:
+    python scripts/setup_mongo_indexes.py
+
+Environment:
+    MONGODB_URI    Connection string (required)
+    MONGODB_DB     Database name (default: "residue")
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+DB_NAME = os.environ.get("MONGODB_DB", "residue")
+COLLECTION_NAME = "acoustic_profiles"
+VECTOR_INDEX_NAME = "acoustic_profile_vector_index"
+
+
+VECTOR_INDEX_DEFINITION = {
+    "name": VECTOR_INDEX_NAME,
+    "type": "vectorSearch",
+    "definition": {
+        "fields": [
+            {
+                "path": "eq_gains",
+                "numDimensions": 7,
+                "type": "vector",
+                "similarity": "cosine",
+            },
+            {
+                "path": "user_id",
+                "type": "filter",
+            },
+        ]
+    },
+}
+
+
+def main() -> int:
+    uri = os.environ.get("MONGODB_URI", "")
+    if not uri:
+        print("ERROR: MONGODB_URI is not set. Export it or add it to .env.")
+        return 1
+
+    try:
+        from pymongo import ASCENDING, MongoClient
+        from pymongo.errors import OperationFailure
+    except ImportError:
+        print("ERROR: pymongo is not installed. Run: pip install -r scripts/requirements.txt")
+        return 1
+
+    client = MongoClient(uri, serverSelectionTimeoutMS=10_000)
+    db = client[DB_NAME]
+
+    # Ensure the collection exists
+    if COLLECTION_NAME not in db.list_collection_names():
+        db.create_collection(COLLECTION_NAME)
+        print(f"Created collection: {DB_NAME}.{COLLECTION_NAME}")
+    else:
+        print(f"Collection already exists: {DB_NAME}.{COLLECTION_NAME}")
+
+    coll = db[COLLECTION_NAME]
+
+    # Unique index on user_id
+    coll.create_index([("user_id", ASCENDING)], unique=True, name="user_id_unique")
+    print("Ensured unique index on user_id")
+
+    # Helper indexes
+    coll.create_index([("agent_address", ASCENDING)], name="agent_address_idx")
+    coll.create_index([("updated_at", ASCENDING)], name="updated_at_idx")
+    print("Ensured indexes on agent_address, updated_at")
+
+    # Try to create the Atlas Vector Search index programmatically. This
+    # only works on Atlas tiers that allow $createSearchIndex via the
+    # driver; on other tiers it raises OperationFailure (CommandNotFound
+    # or NotImplemented). We swallow the error and print the JSON below.
+    vector_created = False
+    try:
+        existing = list(coll.list_search_indexes())
+        names = {idx.get("name") for idx in existing}
+        if VECTOR_INDEX_NAME in names:
+            print(f"Atlas Vector Search index '{VECTOR_INDEX_NAME}' already exists.")
+            vector_created = True
+        else:
+            coll.create_search_index(VECTOR_INDEX_DEFINITION)
+            print(
+                f"Created Atlas Vector Search index '{VECTOR_INDEX_NAME}' "
+                "(may take a few minutes to become queryable)."
+            )
+            vector_created = True
+    except OperationFailure as e:
+        print(
+            "Could not auto-create Atlas Vector Search index "
+            f"({e.code_name or e.code}): {e}"
+        )
+    except Exception as e:  # pragma: no cover
+        print(f"Could not auto-create Atlas Vector Search index: {e}")
+
+    if not vector_created:
+        print()
+        print("=" * 72)
+        print("Manual Atlas Vector Search index creation required.")
+        print(
+            "In Atlas → Database → Search → Create Search Index → JSON Editor,"
+        )
+        print("paste this definition (target collection: acoustic_profiles):")
+        print("=" * 72)
+        print(json.dumps(VECTOR_INDEX_DEFINITION, indent=2))
+        print("=" * 72)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -92,6 +92,14 @@ class OrchestrateRequest(Model):
     behavioral_json: str
     sessions_json: str  # historical session data for correlation
 
+class FindMatchesRequest(Model):
+    user_id: str
+    top_k: int = 5
+
+class FindMatchesResponse(Model):
+    user_id: str
+    matches_json: str
+
 class OrchestrateResponse(Model):
     """Combined response from the multi-agent pipeline."""
     session_id: str
@@ -270,6 +278,26 @@ async def handle_correlation_response(ctx: Context, sender: str, msg: Correlatio
             break
 
 
+@agent.on_message(FindMatchesResponse)
+async def handle_find_matches_response(ctx: Context, sender: str, msg: FindMatchesResponse):
+    """Receive cross-agent match results from the CorrelationAgent."""
+    ctx.logger.info(f"FindMatches response for user {msg.user_id}")
+    try:
+        matches = json.loads(msg.matches_json or "[]")
+    except json.JSONDecodeError:
+        matches = []
+
+    # Store keyed by user_id so the HTTP fallback (or polling clients) can
+    # retrieve the most recent match results.
+    pending_responses[f"match:{msg.user_id}"] = {
+        "complete": True,
+        "result": {
+            "user_id": msg.user_id,
+            "matches": matches,
+        },
+    }
+
+
 @agent.on_message(InterventionResponse)
 async def handle_intervention_response(ctx: Context, sender: str, msg: InterventionResponse):
     """Receive intervention result and send combined response back to client."""
@@ -340,6 +368,8 @@ class OrchestratorHTTPHandler(BaseHTTPRequestHandler):
             self._handle_intervene()
         elif self.path == "/status":
             self._handle_status()
+        elif self.path == "/match":
+            self._handle_match()
         else:
             self.send_error(404)
 
@@ -461,6 +491,47 @@ class OrchestratorHTTPHandler(BaseHTTPRequestHandler):
             },
         }
 
+        self._json_response(200, result)
+
+    def _handle_match(self):
+        """Find users with similar acoustic profiles via cross-agent matching.
+
+        We always run the synchronous in-process fallback (same pattern as
+        _handle_orchestrate, which imports and calls agent functions
+        directly). When CORRELATION_ADDRESS is set we additionally check
+        pending_responses for a recent agent-routed FindMatchesResponse and
+        prefer it — those are populated by the on_message handler when
+        another agent (or this orchestrator) sends the CorrelationAgent a
+        FindMatchesRequest over the uAgents bus.
+        """
+        body = self._read_body()
+        user_id = body.get("user_id", "")
+        top_k = int(body.get("top_k", 5))
+
+        if not user_id:
+            self._json_response(400, {"error": "user_id is required"})
+            return
+
+        # Synchronous in-process fallback (always safe to run)
+        from correlation_agent import find_matches_for_user
+        sync_matches = find_matches_for_user(user_id, top_k=top_k)
+
+        agent_matches: Optional[list] = None
+        if CORRELATION_ADDRESS:
+            entry = pending_responses.get(f"match:{user_id}")
+            if entry and entry.get("complete"):
+                agent_matches = entry["result"].get("matches", [])
+
+        result = {
+            "user_id": user_id,
+            "top_k": top_k,
+            "matches": agent_matches if agent_matches is not None else sync_matches,
+            "source": "agent" if agent_matches is not None else "sync_fallback",
+            "agent_addresses": {
+                "orchestrator": agent.address,
+                "correlation": CORRELATION_ADDRESS or "local",
+            },
+        }
         self._json_response(200, result)
 
     def _handle_status(self):
