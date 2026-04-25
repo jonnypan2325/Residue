@@ -385,7 +385,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
             />
 
             {/* Agent Network */}
-            <AgentPanel />
+            <AgentPanel token={auth.token} />
 
             {/* Study Buddy Finder */}
             <StudyBuddyFinder userOptimalRange={profile?.optimalDbRange} />
