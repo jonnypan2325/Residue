@@ -58,7 +58,7 @@ export interface FeatureExtractorOptions {
   onStats?: (stats: RollingFeatureStats) => void;
 }
 
-interface ScalarRingEntry extends ScalarFeatureSet {}
+type ScalarRingEntry = ScalarFeatureSet;
 
 export class FeatureExtractor {
   private timer: ReturnType<typeof setInterval> | null = null;

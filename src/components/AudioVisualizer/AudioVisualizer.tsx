@@ -59,8 +59,8 @@ export default function AudioVisualizer({
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
 
-    let freqData: Uint8Array | null = null;
-    let timeData: Uint8Array | null = null;
+    let freqData: Uint8Array<ArrayBuffer> | null = null;
+    let timeData: Uint8Array<ArrayBuffer> | null = null;
 
     const draw = () => {
       const rect = canvas.getBoundingClientRect();
@@ -82,10 +82,10 @@ export default function AudioVisualizer({
       }
 
       if (!freqData || freqData.length !== analyser.frequencyBinCount) {
-        freqData = new Uint8Array(analyser.frequencyBinCount);
+        freqData = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
       }
       if (!timeData || timeData.length !== analyser.fftSize) {
-        timeData = new Uint8Array(analyser.fftSize);
+        timeData = new Uint8Array(analyser.fftSize) as Uint8Array<ArrayBuffer>;
       }
       analyser.getByteFrequencyData(freqData);
 

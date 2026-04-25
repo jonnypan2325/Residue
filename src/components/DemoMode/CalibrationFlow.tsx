@@ -150,25 +150,28 @@ export default function CalibrationFlow({ onComplete }: CalibrationFlowProps) {
     setTyped('');
   }, [legIdx, cleanup, onComplete]);
 
-  // Per-leg timer.
+  // Per-leg timer. We avoid a synchronous setState inside the effect body
+  // (react-hooks/set-state-in-effect) by deriving `secondsLeft` from
+  // `Date.now() - legStartedAt` inside the interval callback only.
+  const legStartedAtRef = useRef<number>(0);
   useEffect(() => {
     if (!running) return;
     if (legIdx >= CONDITIONS.length) return;
-    setSecondsLeft(LEG_SECONDS);
+
+    legStartedAtRef.current = Date.now();
     void startStimulus(CONDITIONS[legIdx]);
     inputRef.current?.focus();
 
     const tick = setInterval(() => {
-      setSecondsLeft((s) => {
-        if (s <= 1) {
-          clearInterval(tick);
-          finishLeg();
-          setLegIdx((i) => i + 1);
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
+      const elapsed = (Date.now() - legStartedAtRef.current) / 1000;
+      const remaining = Math.max(0, LEG_SECONDS - Math.floor(elapsed));
+      setSecondsLeft(remaining);
+      if (remaining === 0) {
+        clearInterval(tick);
+        finishLeg();
+        setLegIdx((i) => i + 1);
+      }
+    }, 200);
 
     return () => clearInterval(tick);
   }, [running, legIdx, startStimulus, finishLeg]);

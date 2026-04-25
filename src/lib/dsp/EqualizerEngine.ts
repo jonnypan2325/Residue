@@ -165,7 +165,6 @@ export class EqualizerEngine {
   /** Convenience: log latency once, return it. */
   logLatency(prefix = '[EqualizerEngine]'): DspLatencyReport {
     const r = this.getLatency();
-    // eslint-disable-next-line no-console
     console.info(
       `${prefix} latency base=${r.baseMs.toFixed(2)}ms ` +
         `output=${r.outputMs.toFixed(2)}ms ` +
