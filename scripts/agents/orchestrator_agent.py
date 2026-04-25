@@ -226,15 +226,14 @@ async def handle_perception_response(ctx: Context, sender: str, msg: PerceptionR
 
     with _pending_lock:
         session = pending_responses.get(msg.session_id)
-    if not session:
-        return
-
-    session["perception"] = {
-        "cognitive_state": msg.cognitive_state,
-        "confidence": msg.confidence,
-        "reasoning": msg.reasoning,
-        "recommendation": msg.recommendation,
-    }
+        if not session:
+            return
+        session["perception"] = {
+            "cognitive_state": msg.cognitive_state,
+            "confidence": msg.confidence,
+            "reasoning": msg.reasoning,
+            "recommendation": msg.recommendation,
+        }
 
     # Now trigger InterventionAgent with perception + any correlation data
     if INTERVENTION_ADDRESS:
@@ -266,21 +265,20 @@ async def handle_correlation_response(ctx: Context, sender: str, msg: Correlatio
     """Receive correlation result."""
     ctx.logger.info(f"Correlation response for user {msg.user_id}: {msg.optimal_db} dB")
 
-    # Find the session for this user
+    # Find the session for this user and update atomically under lock
     with _pending_lock:
-        items = list(pending_responses.items())
-    for session_id, session in items:
-        if session["user_id"] == msg.user_id:
-            session["correlation"] = {
-                "optimal_db": msg.optimal_db,
-                "db_range": msg.db_range,
-                "eq_gains": msg.eq_gains,
-                "preferred_bands": msg.preferred_bands,
-                "confidence": msg.confidence,
-                "insight": msg.insight,
-                "data_points": msg.data_points,
-            }
-            break
+        for session_id, session in pending_responses.items():
+            if session.get("user_id") == msg.user_id:
+                session["correlation"] = {
+                    "optimal_db": msg.optimal_db,
+                    "db_range": msg.db_range,
+                    "eq_gains": msg.eq_gains,
+                    "preferred_bands": msg.preferred_bands,
+                    "confidence": msg.confidence,
+                    "insight": msg.insight,
+                    "data_points": msg.data_points,
+                }
+                break
 
 
 @agent.on_message(FindMatchesResponse)
@@ -311,16 +309,15 @@ async def handle_intervention_response(ctx: Context, sender: str, msg: Intervent
 
     with _pending_lock:
         session = pending_responses.get(msg.session_id)
-    if not session:
-        return
-
-    session["intervention"] = {
-        "bed_selection": msg.bed_selection,
-        "eq_profile": msg.eq_profile,
-        "volume_target": msg.volume_target,
-        "reasoning": msg.reasoning,
-        "gap_analysis": msg.gap_analysis_json,
-    }
+        if not session:
+            return
+        session["intervention"] = {
+            "bed_selection": msg.bed_selection,
+            "eq_profile": msg.eq_profile,
+            "volume_target": msg.volume_target,
+            "reasoning": msg.reasoning,
+            "gap_analysis": msg.gap_analysis_json,
+        }
 
     # Build combined response
     perception = session.get("perception", {})
