@@ -1,13 +1,17 @@
 """
 Residue — MongoDB index setup for cross-agent matching.
 
-Creates the `acoustic_profiles` collection (idempotently) and the
-regular indexes needed by the CorrelationAgent's matching workflow.
+The Python CorrelationAgent shares the canonical `profiles` collection
+with the rest of the app (src/lib/mongodb.ts -> getProfilesCollection).
+This script ensures the helper indexes and Atlas Vector Search index
+required by the cross-agent matching pipeline exist, without disturbing
+the indexes already declared in `ensureMongoIndexes()`.
 
 Atlas Vector Search indexes cannot reliably be created via pymongo on
 all Atlas tiers, so this script prints the JSON definition for the
-`eq_gains` vector index — paste it into the Atlas UI under "Search →
-Create Search Index → JSON Editor" if the auto-creation call fails.
+`optimalProfile.eqGains` vector index — paste it into the Atlas UI
+under "Search → Create Search Index → JSON Editor" if the
+auto-creation call fails.
 
 Usage:
     python scripts/setup_mongo_indexes.py
@@ -29,7 +33,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 DB_NAME = os.environ.get("MONGODB_DB", "residue")
-COLLECTION_NAME = "acoustic_profiles"
+COLLECTION_NAME = "profiles"
 VECTOR_INDEX_NAME = "acoustic_profile_vector_index"
 
 
@@ -39,13 +43,13 @@ VECTOR_INDEX_DEFINITION = {
     "definition": {
         "fields": [
             {
-                "path": "eq_gains",
+                "path": "optimalProfile.eqGains",
                 "numDimensions": 7,
                 "type": "vector",
                 "similarity": "cosine",
             },
             {
-                "path": "user_id",
+                "path": "userId",
                 "type": "filter",
             },
         ]
@@ -78,14 +82,14 @@ def main() -> int:
 
     coll = db[COLLECTION_NAME]
 
-    # Unique index on user_id
-    coll.create_index([("user_id", ASCENDING)], unique=True, name="user_id_unique")
-    print("Ensured unique index on user_id")
-
-    # Helper indexes
-    coll.create_index([("agent_address", ASCENDING)], name="agent_address_idx")
-    coll.create_index([("updated_at", ASCENDING)], name="updated_at_idx")
-    print("Ensured indexes on agent_address, updated_at")
+    # Helper indexes for cross-agent matching. We do NOT add a unique
+    # index on userId because the canonical `profiles` collection allows
+    # multiple docs per user (e.g. a `type: 'bayesian'` variant written by
+    # /api/profiles). The compound {userId: 1, type: 1} index from
+    # ensureMongoIndexes() already covers prefix lookups by userId.
+    coll.create_index([("agentAddress", ASCENDING)], name="agentAddress_idx")
+    coll.create_index([("lastUpdated", ASCENDING)], name="lastUpdated_idx")
+    print("Ensured indexes on agentAddress, lastUpdated")
 
     # Try to create the Atlas Vector Search index programmatically. This
     # only works on Atlas tiers that allow $createSearchIndex via the
@@ -120,7 +124,7 @@ def main() -> int:
         print(
             "In Atlas → Database → Search → Create Search Index → JSON Editor,"
         )
-        print("paste this definition (target collection: acoustic_profiles):")
+        print(f"paste this definition (target collection: {COLLECTION_NAME}):")
         print("=" * 72)
         print(json.dumps(VECTOR_INDEX_DEFINITION, indent=2))
         print("=" * 72)

@@ -302,10 +302,33 @@ def get_asi1_compatibility_reasoning(my_profile: dict, their_profile: dict, scor
 
 
 # ── MongoDB Persistence ──────────────────────────────────────────────────────
+#
+# We share the canonical `profiles` collection used by the rest of the app
+# (src/lib/mongodb.ts -> getProfilesCollection). The TS routes write the
+# doc with this shape:
+#
+#   {
+#     userId: str,
+#     optimalProfile: { targetDb, dbRange, eqGains, preferredBands, confidence },
+#     dataPoints, lastUpdated,                # from /api/agents/correlation
+#     eqVector, optimalDbRange,               # from /api/correlations
+#     currentlyStudying, lastActive,          # real-time studying signals
+#   }
+#
+# Our agent contributes the optimalProfile sub-doc (the long-term learned
+# acoustic profile) plus matching metadata (agentAddress, preferredSounds,
+# studyHours, focusScoreAvg, location, insight). We stay out of the way of
+# the real-time fields (currentlyStudying, lastActive, eqVector) so concurrent
+# writers from /api/correlations don't conflict with us.
+#
+# Internally the rest of this module uses snake_case (eq_gains, db_range)
+# because that's what build_optimal_profile() and compute_compatibility()
+# operate on. Translation happens at the read/write boundary only.
 
 MONGO_DB_NAME = os.environ.get("MONGODB_DB", "residue")
-PROFILES_COLLECTION = "acoustic_profiles"
+PROFILES_COLLECTION = "profiles"
 VECTOR_INDEX_NAME = "acoustic_profile_vector_index"
+VECTOR_INDEX_PATH = "optimalProfile.eqGains"
 
 _mongo_client: Optional[Any] = None
 
@@ -328,7 +351,7 @@ def _get_mongo_client():
 
 
 def _get_profiles_collection():
-    """Return the acoustic_profiles collection or None when unavailable."""
+    """Return the canonical `profiles` collection or None when unavailable."""
     client = _get_mongo_client()
     if client is None:
         return None
@@ -338,34 +361,105 @@ def _get_profiles_collection():
         return None
 
 
-def _profile_doc(
+def _epoch_ms() -> int:
+    """Match the `Date.now()` ms-epoch convention used by the TS routes."""
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _to_canonical_doc(
     user_id: str,
     profile: dict,
     agent_address: str,
     extra: Optional[dict] = None,
 ) -> dict:
-    """Build the MongoDB document for an acoustic profile."""
-    doc = {
-        "user_id": user_id,
-        "optimal_db": profile.get("optimal_db"),
-        "db_range": profile.get("db_range"),
-        "eq_gains": profile.get("eq_gains"),
-        "preferred_bands": profile.get("preferred_bands"),
-        "confidence": profile.get("confidence"),
-        "data_points": profile.get("data_points"),
-        "insight": profile.get("insight"),
-        "agent_address": agent_address,
-        "updated_at": datetime.now(timezone.utc),
+    """Translate our internal snake_case profile into the canonical
+    camelCase + nested-optimalProfile shape that lives in `profiles`.
+    Only includes fields we want to write — never None.
+    """
+    optimal: dict[str, Any] = {}
+    if profile.get("optimal_db") is not None:
+        optimal["targetDb"] = profile["optimal_db"]
+    if profile.get("db_range") is not None:
+        optimal["dbRange"] = profile["db_range"]
+    if profile.get("eq_gains") is not None:
+        optimal["eqGains"] = profile["eq_gains"]
+    if profile.get("preferred_bands") is not None:
+        optimal["preferredBands"] = profile["preferred_bands"]
+    if profile.get("confidence") is not None:
+        optimal["confidence"] = profile["confidence"]
+
+    doc: dict[str, Any] = {"userId": user_id}
+    if optimal:
+        doc["optimalProfile"] = optimal
+    if profile.get("data_points") is not None:
+        doc["dataPoints"] = profile["data_points"]
+    if profile.get("insight") is not None:
+        doc["insight"] = profile["insight"]
+    if agent_address:
+        doc["agentAddress"] = agent_address
+    doc["lastUpdated"] = _epoch_ms()
+
+    # Matching metadata. preferred_sounds/etc. on the in-memory profile
+    # take precedence; the `extra` kwarg is a secondary source.
+    metadata_keys = {
+        "preferred_sounds": "preferredSounds",
+        "study_hours": "studyHours",
+        "focus_score_avg": "focusScoreAvg",
+        "location": "location",
     }
-    # Optional matching metadata
-    for key in ("preferred_sounds", "study_hours", "focus_score_avg", "location"):
-        if profile.get(key) is not None:
-            doc[key] = profile[key]
-    if extra:
-        for k, v in extra.items():
-            if v is not None:
-                doc[k] = v
+    for snake, camel in metadata_keys.items():
+        val = profile.get(snake)
+        if val is None and extra:
+            val = extra.get(snake)
+        if val is not None:
+            doc[camel] = val
     return doc
+
+
+def _from_canonical_doc(doc: Optional[dict]) -> Optional[dict]:
+    """Translate a canonical `profiles` doc back into the internal
+    snake_case shape that compute_compatibility() and the rest of this
+    module expect. Falls back to top-level eqVector / optimalDbRange when
+    optimalProfile sub-doc is absent (matches /api/agents/matching's
+    precedence rule).
+    """
+    if not doc:
+        return None
+    optimal = doc.get("optimalProfile") or {}
+    out: dict[str, Any] = {
+        "user_id": doc.get("userId") or doc.get("user_id"),
+        "agent_address": doc.get("agentAddress") or doc.get("agent_address"),
+        "data_points": doc.get("dataPoints") or doc.get("data_points"),
+        "confidence": optimal.get("confidence") or doc.get("confidence"),
+        "insight": doc.get("insight"),
+        "preferred_sounds": doc.get("preferredSounds") or doc.get("preferred_sounds"),
+        "study_hours": doc.get("studyHours") or doc.get("study_hours"),
+        "focus_score_avg": doc.get("focusScoreAvg") or doc.get("focus_score_avg"),
+        "location": doc.get("location"),
+    }
+    # eq_gains: optimalProfile.eqGains preferred, fall back to eqVector
+    out["eq_gains"] = (
+        optimal.get("eqGains")
+        or doc.get("eqVector")
+        or doc.get("eq_gains")
+    )
+    # db_range: optimalProfile.dbRange preferred, fall back to optimalDbRange
+    out["db_range"] = (
+        optimal.get("dbRange")
+        or doc.get("optimalDbRange")
+        or doc.get("db_range")
+    )
+    # optimal_db: prefer targetDb, derive from db_range midpoint as fallback
+    if optimal.get("targetDb") is not None:
+        out["optimal_db"] = optimal["targetDb"]
+    elif out.get("db_range"):
+        rng = out["db_range"]
+        out["optimal_db"] = (rng[0] + rng[1]) / 2
+    out["preferred_bands"] = (
+        optimal.get("preferredBands") or doc.get("preferred_bands") or []
+    )
+    # Strip Nones for cleaner downstream serialization
+    return {k: v for k, v in out.items() if v is not None}
 
 
 def upsert_profile(
@@ -374,17 +468,23 @@ def upsert_profile(
     agent_address: str,
     extra: Optional[dict] = None,
 ) -> bool:
-    """Upsert a profile document into MongoDB. Returns True on success."""
+    """Upsert into the canonical `profiles` collection. Filter on userId
+    only (matching /api/agents/correlation's pattern); merge into whatever
+    doc /api/correlations may have already written.
+
+    Returns True on success.
+    """
     coll = _get_profiles_collection()
     if coll is None:
         return False
-    doc = _profile_doc(user_id, profile, agent_address, extra=extra)
-    # Drop None top-level fields from $set to avoid clobbering existing values
-    set_doc = {k: v for k, v in doc.items() if v is not None}
+    set_doc = _to_canonical_doc(user_id, profile, agent_address, extra=extra)
     try:
         coll.update_one(
-            {"user_id": user_id},
-            {"$set": set_doc, "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
+            {"userId": user_id},
+            {
+                "$set": set_doc,
+                "$setOnInsert": {"createdAt": _epoch_ms()},
+            },
             upsert=True,
         )
         return True
@@ -393,35 +493,37 @@ def upsert_profile(
 
 
 def fetch_profile(user_id: str) -> Optional[dict]:
-    """Read a profile from MongoDB. Returns None if not found / unavailable."""
+    """Read the canonical profile doc for `user_id` and return it in our
+    internal snake_case shape. Returns None when not found / unavailable.
+    """
     coll = _get_profiles_collection()
     if coll is None:
         return None
     try:
-        doc = coll.find_one({"user_id": user_id})
-        if doc:
-            doc.pop("_id", None)
-        return doc
+        doc = coll.find_one({"userId": user_id})
     except Exception:
         return None
+    return _from_canonical_doc(doc)
 
 
 def upsert_agent_address(user_id: str, agent_address: str) -> bool:
-    """Update only the agent_address for a user_id; insert minimal doc if missing."""
+    """Set agentAddress on the user's canonical profile doc; insert
+    minimal doc if missing. Returns True on success.
+    """
     coll = _get_profiles_collection()
     if coll is None:
         return False
     try:
         coll.update_one(
-            {"user_id": user_id},
+            {"userId": user_id},
             {
                 "$set": {
-                    "agent_address": agent_address,
-                    "updated_at": datetime.now(timezone.utc),
+                    "agentAddress": agent_address,
+                    "lastUpdated": _epoch_ms(),
                 },
                 "$setOnInsert": {
-                    "user_id": user_id,
-                    "created_at": datetime.now(timezone.utc),
+                    "userId": user_id,
+                    "createdAt": _epoch_ms(),
                 },
             },
             upsert=True,
@@ -432,11 +534,14 @@ def upsert_agent_address(user_id: str, agent_address: str) -> bool:
 
 
 def _serialize_profile_doc(doc: dict) -> dict:
-    """Strip Mongo-only fields and datetimes for JSON serialization."""
-    out = {k: v for k, v in doc.items() if k != "_id"}
-    for k, v in list(out.items()):
-        if isinstance(v, datetime):
-            out[k] = v.isoformat()
+    """Translate a raw Mongo doc (canonical shape) into the internal shape
+    plus a JSON-safe vector_score. Used by vector_search_similar consumers.
+    """
+    raw = {k: v for k, v in doc.items() if k != "_id"}
+    score = raw.get("score")
+    out = _from_canonical_doc(raw) or {}
+    if score is not None:
+        out["score"] = score
     return out
 
 
@@ -460,26 +565,25 @@ def vector_search_similar(
             {
                 "$vectorSearch": {
                     "index": VECTOR_INDEX_NAME,
-                    "path": "eq_gains",
+                    "path": VECTOR_INDEX_PATH,
                     "queryVector": query_vector,
                     "numCandidates": max(top_k * 10, 50),
                     "limit": top_k,
-                    "filter": {"user_id": {"$ne": exclude_user_id}},
+                    "filter": {"userId": {"$ne": exclude_user_id}},
                 }
             },
             {
                 "$project": {
-                    "user_id": 1,
-                    "optimal_db": 1,
-                    "db_range": 1,
-                    "eq_gains": 1,
-                    "preferred_bands": 1,
-                    "preferred_sounds": 1,
-                    "confidence": 1,
-                    "agent_address": 1,
-                    "study_hours": 1,
-                    "focus_score_avg": 1,
+                    "userId": 1,
+                    "optimalProfile": 1,
+                    "eqVector": 1,
+                    "optimalDbRange": 1,
+                    "preferredSounds": 1,
+                    "agentAddress": 1,
+                    "studyHours": 1,
+                    "focusScoreAvg": 1,
                     "location": 1,
+                    "dataPoints": 1,
                     "score": {"$meta": "vectorSearchScore"},
                 }
             },
@@ -491,15 +595,17 @@ def vector_search_similar(
         # Atlas Vector Search not available — fall through to manual search
         pass
 
-    # Manual fallback: load all other profiles and rank by cosine similarity
+    # Manual fallback: load all other profiles and rank by cosine similarity.
+    # Use the same precedence as /api/agents/matching: prefer
+    # optimalProfile.eqGains, fall back to top-level eqVector.
     try:
-        docs = list(coll.find({"user_id": {"$ne": exclude_user_id}}).limit(500))
+        docs = list(coll.find({"userId": {"$ne": exclude_user_id}}).limit(500))
     except Exception:
         return []
 
     scored: list[tuple[float, dict]] = []
     for doc in docs:
-        eq = doc.get("eq_gains")
+        eq = (doc.get("optimalProfile") or {}).get("eqGains") or doc.get("eqVector")
         if not eq:
             continue
         sim = cosine_similarity(query_vector, eq)
@@ -683,17 +789,25 @@ def create_agent():
         coll = _get_profiles_collection()
         ok = False
         if coll is not None:
-            set_doc = {k: v for k, v in meta.items() if v is not None}
-            set_doc["agent_address"] = str(_agent.address)
-            set_doc["updated_at"] = datetime.now(timezone.utc)
+            camel_map = {
+                "preferred_sounds": "preferredSounds",
+                "study_hours": "studyHours",
+                "focus_score_avg": "focusScoreAvg",
+                "location": "location",
+            }
+            set_doc: dict[str, Any] = {
+                camel_map[k]: v for k, v in meta.items() if v is not None
+            }
+            set_doc["agentAddress"] = str(_agent.address)
+            set_doc["lastUpdated"] = _epoch_ms()
             try:
                 coll.update_one(
-                    {"user_id": msg.user_id},
+                    {"userId": msg.user_id},
                     {
                         "$set": set_doc,
                         "$setOnInsert": {
-                            "user_id": msg.user_id,
-                            "created_at": datetime.now(timezone.utc),
+                            "userId": msg.user_id,
+                            "createdAt": _epoch_ms(),
                         },
                     },
                     upsert=True,
@@ -787,9 +901,9 @@ def create_agent():
         coll = _get_profiles_collection()
         if coll is not None:
             try:
-                doc = coll.find_one({"agent_address": str(_agent.address)})
+                doc = coll.find_one({"agentAddress": str(_agent.address)})
                 if doc:
-                    my_user_id = doc.get("user_id", my_user_id)
+                    my_user_id = doc.get("userId", my_user_id)
                     my_profile = _serialize_profile_doc(doc)
             except Exception:
                 pass

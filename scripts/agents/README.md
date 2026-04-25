@@ -115,13 +115,15 @@ Flow:
 2. Orchestrator dispatches a `FindMatchesRequest` to the
    CorrelationAgent (and runs an in-process synchronous fallback).
 3. CorrelationAgent A loads its user's profile from MongoDB and runs
-   Atlas Vector Search on the `eq_gains` field to find the top-K most
-   similar profiles. If Atlas Vector Search isn't configured, it falls
-   back to a Python-side cosine similarity scan over the collection.
+   Atlas Vector Search on the `optimalProfile.eqGains` field to find the
+   top-K most similar profiles. If Atlas Vector Search isn't configured,
+   it falls back to a Python-side cosine similarity scan over the
+   collection (using `optimalProfile.eqGains` with a fallback to
+   top-level `eqVector`, matching `/api/agents/matching`'s precedence).
 4. For each candidate, A computes full compatibility (EQ cosine
    similarity, dB-range overlap, shared sounds) and asks ASI1-Mini for a
    natural-language match reasoning.
-5. For each candidate that has a registered `agent_address`, A also
+5. For each candidate that has a registered `agentAddress`, A also
    sends a `ProfileExchangeRequest` to the candidate's CorrelationAgent.
    The peer responds with its own profile and compatibility scores —
    bidirectional confirmation that doesn't block the response.
@@ -129,32 +131,50 @@ Flow:
 
 ### MongoDB
 
-Collection: `residue.acoustic_profiles` (one document per `user_id`).
+The Python CorrelationAgent shares the canonical `profiles` collection
+used by the rest of the app (`src/lib/mongodb.ts → getProfilesCollection`).
+It contributes the `optimalProfile` sub-doc plus matching metadata; it
+does not touch the real-time studying signals (`currentlyStudying`,
+`lastActive`, top-level `eqVector`/`optimalDbRange`) which are owned by
+`/api/correlations`.
 
 ```json
 {
-  "user_id": "user1",
-  "optimal_db": 48,
-  "db_range": [42, 55],
-  "eq_gains": [0.3, 0.5, 0.6, 0.4, 0.3, 0.2, 0.1],
-  "preferred_bands": ["Low-mid", "Mid"],
-  "preferred_sounds": ["brown noise", "rain"],
-  "confidence": 0.85,
-  "data_points": 42,
-  "agent_address": "agent1q...",
-  "study_hours": "9am-5pm",
-  "focus_score_avg": 72,
+  "userId": "user1",
+  "optimalProfile": {
+    "targetDb": 48,
+    "dbRange": [42, 55],
+    "eqGains": [0.3, 0.5, 0.6, 0.4, 0.3, 0.2, 0.1],
+    "preferredBands": ["Low-mid", "Mid"],
+    "confidence": 0.85
+  },
+  "dataPoints": 42,
+  "agentAddress": "agent1q...",
+  "preferredSounds": ["brown noise", "rain"],
+  "studyHours": "9am-5pm",
+  "focusScoreAvg": 72,
   "location": "UCLA Campus",
-  "updated_at": "2025-04-01T12:00:00Z"
+  "insight": "Your optimal environment is around 48 dB ...",
+  "lastUpdated": 1714000000000,
+  "createdAt": 1714000000000,
+
+  // Real-time fields owned by /api/correlations (NOT written by the agent):
+  "eqVector": [0.3, 0.5, 0.6, 0.4, 0.3, 0.2, 0.1],
+  "optimalDbRange": [42, 55],
+  "currentlyStudying": true,
+  "lastActive": 1714000000000,
+  "lastProductivityScore": 78
 }
 ```
 
 Indexes:
 
-- Unique `user_id`
-- Standard `agent_address`, `updated_at`
-- Atlas Vector Search index on `eq_gains` (7 dims, cosine):
-  `acoustic_profile_vector_index`
+- Compound `{userId: 1, type: 1}` (created by `ensureMongoIndexes()` —
+  not unique, so the agent shares the doc with `/api/correlations`)
+- Helper `agentAddress`, `lastUpdated` (created by
+  `setup_mongo_indexes.py`)
+- Atlas Vector Search index on `optimalProfile.eqGains` (7 dims,
+  cosine), filterable by `userId`: `acoustic_profile_vector_index`
 
 Run `python scripts/setup_mongo_indexes.py` to create the regular
 indexes and (where supported) the Atlas Vector Search index. On Atlas
