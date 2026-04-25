@@ -197,10 +197,30 @@ final class SessionStore: ObservableObject {
     }
 
     /// Hook fired by `ActiveSessionPoller` when the desktop session ends.
-    /// Implemented as a no-op for now; the auto-report wiring lands in
-    /// the next commit so this commit can be reviewed in isolation.
+    ///
+    /// Stops the lifecycle monitor (no further open/close events should
+    /// be attributed to a session that no longer exists) and triggers the
+    /// existing on-device Zetic Melange report flow automatically — the
+    /// same `generateReport()` path the manual button still calls. The
+    /// resulting summary is shown in the same `SessionView`
+    /// "On-device distraction report" section and POSTed to
+    /// `/api/phone/report` so the desktop can render it (and the server
+    /// fires `feedReportIntoAgents()` to update the user's personal
+    /// Fetch.ai correlation profile).
     func handleDesktopStopped(sessionId: String) async {
         log.info("desktop stopped session \(sessionId, privacy: .public)")
+        // Make sure we attribute the report to the session that just
+        // ended, not any session that might race in afterwards.
+        if pairedSessionId == nil {
+            pairedSessionId = sessionId
+        }
+        stopSessionTracking()
+        // Avoid double-firing if the user already tapped the manual
+        // "Generate distraction report" button while the session was
+        // running.
+        if reportInProgress { return }
+        if reportSummary != nil { return }
+        await generateReport()
     }
 
     // MARK: - Lifecycle tracking
