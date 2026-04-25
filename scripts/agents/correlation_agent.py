@@ -550,7 +550,7 @@ def vector_search_similar(
     exclude_user_id: str,
     top_k: int,
 ) -> list[dict]:
-    """Run Atlas Vector Search against the acoustic_profiles collection.
+    """Run Atlas Vector Search against the canonical profiles collection.
 
     Falls back to a manual Python-side cosine similarity search when
     Atlas Vector Search is not configured (common in dev / community tier).
