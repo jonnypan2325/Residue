@@ -468,9 +468,9 @@ def upsert_profile(
     agent_address: str,
     extra: Optional[dict] = None,
 ) -> bool:
-    """Upsert into the canonical `profiles` collection. Filter on userId
-    only (matching /api/agents/correlation's pattern); merge into whatever
-    doc /api/correlations may have already written.
+    """Upsert into the canonical `profiles` collection. Filters on userId
+    and excludes the Bayesian variant (type: 'bayesian') so agent writes
+    never corrupt the Bayesian profile schema.
 
     Returns True on success.
     """
@@ -480,10 +480,10 @@ def upsert_profile(
     set_doc = _to_canonical_doc(user_id, profile, agent_address, extra=extra)
     try:
         coll.update_one(
-            {"userId": user_id},
+            {"userId": user_id, "type": {"$ne": "bayesian"}},
             {
                 "$set": set_doc,
-                "$setOnInsert": {"createdAt": _epoch_ms()},
+                "$setOnInsert": {"createdAt": _epoch_ms(), "type": "agent"},
             },
             upsert=True,
         )
@@ -494,28 +494,29 @@ def upsert_profile(
 
 def fetch_profile(user_id: str) -> Optional[dict]:
     """Read the canonical profile doc for `user_id` and return it in our
-    internal snake_case shape. Returns None when not found / unavailable.
+    internal snake_case shape. Excludes the Bayesian variant (type: 'bayesian')
+    to avoid reading the wrong schema. Returns None when not found / unavailable.
     """
     coll = _get_profiles_collection()
     if coll is None:
         return None
     try:
-        doc = coll.find_one({"userId": user_id})
+        doc = coll.find_one({"userId": user_id, "type": {"$ne": "bayesian"}})
     except Exception:
         return None
     return _from_canonical_doc(doc)
 
 
 def upsert_agent_address(user_id: str, agent_address: str) -> bool:
-    """Set agentAddress on the user's canonical profile doc; insert
-    minimal doc if missing. Returns True on success.
+    """Set agentAddress on the user's canonical (non-Bayesian) profile doc;
+    insert minimal doc if missing. Returns True on success.
     """
     coll = _get_profiles_collection()
     if coll is None:
         return False
     try:
         coll.update_one(
-            {"userId": user_id},
+            {"userId": user_id, "type": {"$ne": "bayesian"}},
             {
                 "$set": {
                     "agentAddress": agent_address,
@@ -523,6 +524,7 @@ def upsert_agent_address(user_id: str, agent_address: str) -> bool:
                 },
                 "$setOnInsert": {
                     "userId": user_id,
+                    "type": "agent",
                     "createdAt": _epoch_ms(),
                 },
             },
