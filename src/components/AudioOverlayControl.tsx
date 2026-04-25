@@ -47,7 +47,7 @@ export default function AudioOverlayControl({
   return (
     <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-6 space-y-4">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold text-white">Acoustic Overlay</h3>
+        <h3 className="text-base font-medium text-white">Acoustic Overlay</h3>
         <div className="flex items-center gap-2">
           {overlayState.isPlaying && (
             <span className="flex items-center gap-1.5 text-xs text-green-400">

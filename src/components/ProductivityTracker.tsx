@@ -56,7 +56,7 @@ export default function ProductivityTracker({
   };
 
   return (
-    <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-6 space-y-4">
+    <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-5 space-y-4">
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-semibold text-white">Productivity Tracker</h3>
         <button
@@ -129,7 +129,7 @@ export default function ProductivityTracker({
           <p className="text-sm text-gray-400 mb-2">
             Session Timeline ({history.length} snapshots)
           </p>
-          <div className="flex gap-0.5 h-8 items-end">
+          <div className="flex gap-0.5 h-16 items-end">
             {history.slice(-40).map((s, i) => (
               <div
                 key={i}

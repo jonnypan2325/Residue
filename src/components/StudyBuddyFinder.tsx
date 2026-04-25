@@ -85,7 +85,7 @@ export default function StudyBuddyFinder({ userOptimalRange }: Props) {
   return (
     <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-6 space-y-4">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold text-white">Study Buddy Finder</h3>
+        <h3 className="text-base font-medium text-white">Study Buddy Finder</h3>
         <button
           onClick={findBuddies}
           disabled={isSearching}

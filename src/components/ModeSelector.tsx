@@ -16,12 +16,12 @@ const MODES: { id: Mode; label: string; icon: string; desc: string }[] = [
 
 export default function ModeSelector({ currentMode, onModeChange }: Props) {
   return (
-    <div className="flex gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
       {MODES.map((mode) => (
         <button
           key={mode.id}
           onClick={() => onModeChange(mode.id)}
-          className={`flex-1 p-3 rounded-xl text-center transition-all ${
+          className={`p-3 rounded-xl text-center transition-all ${
             currentMode === mode.id
               ? 'bg-cyan-500/20 border-2 border-cyan-500/50 ring-1 ring-cyan-500/20'
               : 'bg-gray-800/50 border-2 border-transparent hover:border-gray-700'

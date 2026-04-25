@@ -142,6 +142,7 @@ export default function Home() {
                 Residue
               </h1>
               <p className="text-xs text-gray-500">Personalized Acoustic Intelligence</p>
+              <p className="text-[10px] text-gray-600 mt-0.5">ZETIC · ElevenLabs · Fetch.ai · MongoDB · Cognition · Web Audio</p>
             </div>
           </div>
 
@@ -155,7 +156,7 @@ export default function Home() {
               onLogout={auth.logout}
             />
             {sessionActive && (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 rounded-lg">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 rounded-lg transition-all duration-300">
                 <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
                 <span className="text-sm font-mono text-gray-300">
                   {formatDuration(sessionDuration)}
@@ -185,7 +186,7 @@ export default function Home() {
           {/* Left Column - Audio Analysis */}
           <div className="lg:col-span-2 space-y-6">
             {/* Frequency Visualizer */}
-            <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-6">
+            <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-5">
               <h3 className="text-lg font-semibold text-white mb-3">
                 Acoustic Environment
                 {isListening && (
@@ -271,55 +272,15 @@ export default function Home() {
             <StudyBuddyFinder userOptimalRange={profile?.optimalDbRange} />
 
             {/* On-Device Processing Badge */}
-            <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-4">
+            <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-5">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
-                  <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
-                </div>
+                <svg className="w-4 h-4 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
                 <div>
-                  <p className="text-sm font-medium text-green-400">On-Device Processing</p>
-                  <p className="text-xs text-gray-400">
-                    All audio analysis & screen capture processed locally.
-                    No data leaves your device.
-                  </p>
+                  <p className="text-sm font-medium text-green-400">All processing on-device</p>
+                  <p className="text-xs text-gray-400">Audio analysis, screen capture & correlation never leave your device.</p>
                 </div>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <div className="bg-gray-800/50 rounded p-2">
-                  <span className="text-gray-400">Audio FFT</span>
-                  <span className="block text-green-400 font-mono">On-device</span>
-                </div>
-                <div className="bg-gray-800/50 rounded p-2">
-                  <span className="text-gray-400">Screen Diff</span>
-                  <span className="block text-green-400 font-mono">On-device</span>
-                </div>
-                <div className="bg-gray-800/50 rounded p-2">
-                  <span className="text-gray-400">Correlation</span>
-                  <span className="block text-green-400 font-mono">On-device</span>
-                </div>
-                <div className="bg-gray-800/50 rounded p-2">
-                  <span className="text-gray-400">Audio Gen</span>
-                  <span className="block text-cyan-400 font-mono">Web Audio</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Tech Stack */}
-            <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-4">
-              <p className="text-xs text-gray-400 mb-2">Powered by</p>
-              <div className="flex flex-wrap gap-2">
-                {['ZETIC Melange', 'ElevenLabs', 'Fetch.ai', 'MongoDB Atlas', 'Cognition', 'Web Audio API'].map(
-                  (tech) => (
-                    <span
-                      key={tech}
-                      className="px-2 py-1 bg-gray-800/50 text-gray-300 text-xs rounded-md border border-gray-700"
-                    >
-                      {tech}
-                    </span>
-                  )
-                )}
               </div>
             </div>
           </div>

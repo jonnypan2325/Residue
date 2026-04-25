@@ -116,7 +116,7 @@ export default function AgentPanel() {
   };
 
   return (
-    <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-4 space-y-3">
+    <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-5 space-y-3">
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
