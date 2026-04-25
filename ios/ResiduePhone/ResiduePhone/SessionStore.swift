@@ -59,6 +59,7 @@ final class SessionStore: ObservableObject {
 
     private var monitor: AppLifecycleMonitor?
     private let melange = MelangeReportGenerator()
+    private let activeSessionPoller = ActiveSessionPoller()
 
     func bootstrap() async {
         token = UserDefaults.standard.string(forKey: DefaultsKey.token)
@@ -70,6 +71,7 @@ final class SessionStore: ObservableObject {
                     sessionStart = Date()
                 }
                 startSessionTracking(sessionId: pairedSessionId)
+                await startActiveSessionPolling(token: t)
             } catch {
                 token = nil
                 UserDefaults.standard.removeObject(forKey: DefaultsKey.token)
@@ -99,6 +101,7 @@ final class SessionStore: ObservableObject {
 
     func logout() {
         stopSessionTracking()
+        Task { [activeSessionPoller] in await activeSessionPoller.stop() }
         token = nil
         user = nil
         pairedSessionId = nil
@@ -121,6 +124,9 @@ final class SessionStore: ObservableObject {
         startSessionTracking(sessionId: pairedSessionId)
         persistSessionState()
         statusMessage = nil
+        Task { [weak self, token = resp.token] in
+            await self?.startActiveSessionPolling(token: token)
+        }
     }
 
     // MARK: - Pairing
@@ -144,6 +150,57 @@ final class SessionStore: ObservableObject {
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    /// Auto-bind to a desktop session that the active-session poller
+    /// just observed. No 6-digit code, no UI flow — the same end state
+    /// as `claim(code:)` but driven by the backend signal that the
+    /// same-account user just clicked "Start Session" on the laptop.
+    func bindToActiveSession(sessionId: String) async {
+        guard let token else { return }
+        if pairedSessionId == sessionId {
+            // Already bound to this session — nothing to do.
+            return
+        }
+        do {
+            let resp = try await api.autoPair(sessionId: sessionId, deviceId: deviceId, token: token)
+            pairedSessionId = resp.sessionId
+            sessionStart = Date()
+            openCount = 0
+            totalDistractionMs = 0
+            activeSince = nil
+            reportSummary = nil
+            statusMessage = "Paired with desktop session"
+            persistSessionState()
+            stopSessionTracking()
+            startSessionTracking(sessionId: resp.sessionId)
+            log.info("auto-bound to desktop session \(resp.sessionId, privacy: .public)")
+        } catch {
+            log.error("auto-bind failed: \(error.localizedDescription, privacy: .public)")
+            statusMessage = "Auto-pair failed: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Active session polling
+
+    private func startActiveSessionPolling(token: String) async {
+        await activeSessionPoller.stop()
+        await activeSessionPoller.start(token: token) { [weak self] transition in
+            guard let self else { return }
+            switch transition {
+            case .sessionStarted(let sessionId):
+                await self.bindToActiveSession(sessionId: sessionId)
+            case .sessionEnded(let sessionId):
+                await self.handleDesktopStopped(sessionId: sessionId)
+            }
+        }
+    }
+
+    /// Hook fired by `ActiveSessionPoller` when the desktop session ends.
+    /// Implemented as a no-op for now; the auto-report wiring lands in
+    /// the next commit so this commit can be reviewed in isolation.
+    func handleDesktopStopped(sessionId: String) async {
+        log.info("desktop stopped session \(sessionId, privacy: .public)")
     }
 
     // MARK: - Lifecycle tracking

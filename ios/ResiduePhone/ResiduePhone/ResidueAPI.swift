@@ -24,6 +24,19 @@ struct PairClaimResponse: Codable {
     let claimedAt: Double?
 }
 
+/// Mirrors the desktop's `/api/phone/active-session` response. The phone
+/// polls this endpoint every few seconds; transitions in
+/// `currentlyStudying` drive auto-bind (false→true) and auto-report
+/// (true→false) on the device.
+struct ActiveSessionResponse: Codable {
+    let userId: String
+    let currentlyStudying: Bool
+    let currentSessionId: String?
+    let currentMode: String?
+    let startedAt: Double?
+    let endedAt: Double?
+}
+
 /// Mirrors the on-device distraction classifier output produced by the Zetic
 /// Melange model. Encodes 1:1 to the desktop's `PhoneStateInference` shape.
 struct DistractionInference: Codable {
@@ -130,6 +143,23 @@ final class ResidueAPI {
             body: ["code": code, "phoneDeviceId": deviceId],
             token: token
         )
+    }
+
+    /// Codeless companion to `claim(code:deviceId:token:)`. Used after the
+    /// poller observes that the user has started a desktop session for
+    /// the same Mongo account — there is no 6-digit code to type.
+    func autoPair(sessionId: String, deviceId: String, token: String) async throws -> PairClaimResponse {
+        try await postJSON(
+            path: "/api/pair/auto",
+            body: ["sessionId": sessionId, "phoneDeviceId": deviceId],
+            token: token
+        )
+    }
+
+    // MARK: - Active session
+
+    func activeSession(token: String) async throws -> ActiveSessionResponse {
+        try await getJSON(path: "/api/phone/active-session", token: token)
     }
 
     // MARK: - Phone events
