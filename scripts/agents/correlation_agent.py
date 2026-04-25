@@ -805,12 +805,13 @@ def create_agent():
             set_doc["lastUpdated"] = _epoch_ms()
             try:
                 coll.update_one(
-                    {"userId": msg.user_id},
+                    {"userId": msg.user_id, "type": {"$ne": "bayesian"}},
                     {
                         "$set": set_doc,
                         "$setOnInsert": {
                             "userId": msg.user_id,
                             "createdAt": _epoch_ms(),
+                            "type": "agent",
                         },
                     },
                     upsert=True,
