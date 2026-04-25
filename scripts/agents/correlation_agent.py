@@ -270,8 +270,8 @@ def compute_compatibility(my_profile: dict, their_profile: dict) -> dict:
         "eq_similarity": round(eq_sim, 3),
         "db_overlap": round(db_overlap, 3),
         "sound_preference_overlap": round(sound_overlap, 3),
-        "shared_sounds": list(my_sounds & their_sounds),
-        "shared_bands": list(
+        "shared_sounds": sorted(my_sounds & their_sounds),
+        "shared_bands": sorted(
             set(my_profile.get("preferred_bands", []) or [])
             & set(their_profile.get("preferred_bands", []) or [])
         ),
