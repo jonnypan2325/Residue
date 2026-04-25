@@ -552,7 +552,8 @@ def vector_search_similar(
     exclude_user_id: str,
     top_k: int,
 ) -> list[dict]:
-    """Run Atlas Vector Search against the canonical profiles collection.
+    """Run Atlas Vector Search against the canonical profiles collection,
+    excluding the requesting user and Bayesian profile variants (type: 'bayesian').
 
     Falls back to a manual Python-side cosine similarity search when
     Atlas Vector Search is not configured (common in dev / community tier).
@@ -571,7 +572,7 @@ def vector_search_similar(
                     "queryVector": query_vector,
                     "numCandidates": max(top_k * 10, 50),
                     "limit": top_k,
-                    "filter": {"userId": {"$ne": exclude_user_id}},
+                    "filter": {"userId": {"$ne": exclude_user_id}, "type": {"$ne": "bayesian"}},
                 }
             },
             {
@@ -601,7 +602,7 @@ def vector_search_similar(
     # Use the same precedence as /api/agents/matching: prefer
     # optimalProfile.eqGains, fall back to top-level eqVector.
     try:
-        docs = list(coll.find({"userId": {"$ne": exclude_user_id}}).limit(500))
+        docs = list(coll.find({"userId": {"$ne": exclude_user_id}, "type": {"$ne": "bayesian"}}).limit(500))
     except Exception:
         return []
 
