@@ -20,6 +20,7 @@ import {
 import { getAgentSet, POOL_SIZE } from '@/lib/agents/pool';
 
 
+
 // MongoDB's default Collection type narrows `_id` to ObjectId; we use string
 // ids (`user-<uuid>`, 6-digit pairing codes, …) so we cast the collection to a
 // loose `Collection<T>` shape per access. This keeps the existing

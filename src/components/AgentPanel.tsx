@@ -147,7 +147,7 @@ export default function AgentPanel({ token, userId }: AgentPanelProps) {
         className="flex justify-between items-center w-full text-left"
       >
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+          <div className="w-6 h-6 rounded bg-linear-to-br from-blue-500 to-purple-600 flex items-center justify-center">
             <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
@@ -235,7 +235,7 @@ export default function AgentPanel({ token, userId }: AgentPanelProps) {
           {/* Chat with Agent Button */}
           <button
             onClick={openASIOneChat}
-            className="w-full p-3 rounded-lg bg-gradient-to-r from-blue-500/20 to-purple-500/20 border border-blue-500/30 hover:border-blue-500/50 transition-all text-left"
+            className="w-full p-3 rounded-lg bg-linear-to-r from-blue-500/20 to-purple-500/20 border border-blue-500/30 hover:border-blue-500/50 transition-all text-left"
           >
             <div className="flex items-center justify-between">
               <div>
