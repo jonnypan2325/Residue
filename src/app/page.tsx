@@ -478,7 +478,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
         body: JSON.stringify({
           session_id: sessionId,
           user_id: 'user-1',
-          goal_mode: currentMode,
+          goal_mode: mode,
           acoustic: latestAcousticProfile ? {
             overall_db: latestAcousticProfile.overallDb,
             frequency_bands: latestAcousticProfile.frequencyBands.map((b) => b.magnitude),
@@ -499,7 +499,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
         }
         if (data.intervention) {
           (window as never as Record<string, unknown>).__residueIntervention = {
-            goalMode: currentMode,
+            goalMode: mode,
             bedSelection: data.intervention.bed_selection,
             eqProfile: data.intervention.eq_profile,
             volumeTarget: data.intervention.volume_target,
