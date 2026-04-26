@@ -3,6 +3,49 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 
 type SoundType = 'brown-noise' | 'pink-noise' | 'white-noise' | 'rain' | 'cafe' | 'binaural' | 'ai-generated';
+type Mode = 'focus' | 'calm' | 'creative' | 'social';
+
+const MODE_AUDIO_PRESETS: Record<Mode, {
+  volume: number;
+  targetDb: number;
+  pitchFactor: number;
+  filterType: BiquadFilterType;
+  filterFrequency: number;
+  filterQ: number;
+}> = {
+  focus: {
+    volume: 0.2,
+    targetDb: 42,
+    pitchFactor: 0.88,
+    filterType: 'lowpass',
+    filterFrequency: 850,
+    filterQ: 0.6,
+  },
+  calm: {
+    volume: 0.24,
+    targetDb: 45,
+    pitchFactor: 0.82,
+    filterType: 'lowpass',
+    filterFrequency: 650,
+    filterQ: 0.4,
+  },
+  creative: {
+    volume: 0.32,
+    targetDb: 51,
+    pitchFactor: 1.08,
+    filterType: 'bandpass',
+    filterFrequency: 1250,
+    filterQ: 0.9,
+  },
+  social: {
+    volume: 0.42,
+    targetDb: 58,
+    pitchFactor: 1.18,
+    filterType: 'highpass',
+    filterFrequency: 280,
+    filterQ: 0.5,
+  },
+};
 
 interface OverlayState {
   isPlaying: boolean;
@@ -15,12 +58,14 @@ interface OverlayState {
 
 function createNoiseBuffer(
   ctx: AudioContext,
-  type: SoundType
+  type: SoundType,
+  mode: Mode
 ): AudioBuffer {
   const sampleRate = ctx.sampleRate;
   const duration = 4;
   const length = sampleRate * duration;
   const buffer = ctx.createBuffer(2, length, sampleRate);
+  const { pitchFactor } = MODE_AUDIO_PRESETS[mode];
 
   for (let channel = 0; channel < 2; channel++) {
     const data = buffer.getChannelData(channel);
@@ -59,29 +104,62 @@ function createNoiseBuffer(
       case 'rain': {
         for (let i = 0; i < length; i++) {
           const white = Math.random() * 2 - 1;
-          const envelope = Math.random() < 0.001 ? 0.8 : 0.1;
+          const envelope = Math.random() < 0.001 * pitchFactor ? 0.8 : 0.1;
           data[i] = white * envelope;
         }
         let b = 0;
         for (let i = 0; i < length; i++) {
-          b = 0.97 * b + data[i] * 0.03;
+          b = (0.985 - pitchFactor * 0.015) * b + data[i] * 0.03;
           data[i] = b * 5;
         }
         break;
       }
       case 'cafe': {
-        let brownLast = 0;
+        let roomTone = 0;
+        let hiss = 0;
+        const stereoOffset = channel === 0 ? 0 : 0.37;
+        const chatterVoices = [
+          { freq: 165, mod: 0.9, phase: 0.2 + stereoOffset },
+          { freq: 230, mod: 1.3, phase: 1.6 + stereoOffset },
+          { freq: 420, mod: 0.7, phase: 2.8 + stereoOffset },
+          { freq: 760, mod: 1.1, phase: 4.1 + stereoOffset },
+        ];
+
         for (let i = 0; i < length; i++) {
+          const t = i / sampleRate;
           const white = Math.random() * 2 - 1;
-          brownLast = (brownLast + 0.02 * white) / 1.02;
-          const murmur = Math.sin(i * 0.001 * (1 + Math.random() * 0.5)) * 0.05;
-          data[i] = (brownLast * 2 + murmur) * (0.8 + Math.random() * 0.4);
+
+          roomTone = (roomTone + 0.018 * white) / 1.018;
+          hiss = 0.92 * hiss + 0.08 * white;
+
+          const chatter = chatterVoices.reduce((sum, voice) => {
+            const phraseEnvelope =
+              0.35 + 0.65 * Math.max(0, Math.sin(2 * Math.PI * voice.mod * t + voice.phase));
+            const syllableEnvelope =
+              0.55 + 0.45 * Math.sin(2 * Math.PI * (voice.mod * 5.7) * t + voice.phase * 1.7);
+            return (
+              sum +
+              Math.sin(2 * Math.PI * voice.freq * pitchFactor * t + voice.phase) *
+                phraseEnvelope *
+                syllableEnvelope
+            );
+          }, 0) * 0.035;
+
+          const espressoSteam =
+            Math.max(0, Math.sin(2 * Math.PI * 0.18 * t + stereoOffset)) * hiss * 0.05;
+
+          const cupClink =
+            Math.exp(-((t % 1.9) * 18)) *
+            Math.sin(2 * Math.PI * (1800 + channel * 260) * t) *
+            (Math.sin(2 * Math.PI * 0.31 * t + 1.1) > 0.96 ? 0.12 : 0);
+
+          data[i] = roomTone * 0.9 + chatter + espressoSteam + cupClink;
         }
         break;
       }
       case 'binaural': {
-        const baseFreq = 200;
-        const beatFreq = 10;
+        const baseFreq = 200 * pitchFactor;
+        const beatFreq = 10 * pitchFactor;
         const leftFreq = baseFreq;
         const rightFreq = baseFreq + beatFreq;
         const freq = channel === 0 ? leftFreq : rightFreq;
@@ -105,8 +183,8 @@ export function useAudioOverlay() {
   const [overlayState, setOverlayState] = useState<OverlayState>({
     isPlaying: false,
     soundType: 'brown-noise',
-    volume: 0.3,
-    targetDb: 50,
+    volume: MODE_AUDIO_PRESETS.focus.volume,
+    targetDb: MODE_AUDIO_PRESETS.focus.targetDb,
     aiGenerating: false,
     aiPrompt: null,
   });
@@ -116,6 +194,7 @@ export function useAudioOverlay() {
   const gainRef = useRef<GainNode | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const filterRef = useRef<BiquadFilterNode | null>(null);
   const volumeRef = useRef(overlayState.volume);
 
   useEffect(() => {
@@ -140,10 +219,16 @@ export function useAudioOverlay() {
     sourceRef.current = null;
     ctxRef.current = null;
     gainRef.current = null;
+    filterRef.current = null;
     setOverlayState((prev) => ({ ...prev, isPlaying: false, aiGenerating: false }));
   }, []);
 
-  const startOverlay = useCallback((soundType: SoundType, volume: number, targetDb: number) => {
+  const startOverlay = useCallback((
+    soundType: SoundType,
+    volume: number,
+    targetDb: number,
+    mode: Mode = 'focus'
+  ) => {
     stopOverlay();
 
     if (soundType === 'ai-generated') {
@@ -154,19 +239,27 @@ export function useAudioOverlay() {
 
     const ctx = new AudioContext();
     const gain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    const preset = MODE_AUDIO_PRESETS[mode];
+
+    filter.type = preset.filterType;
+    filter.frequency.value = preset.filterFrequency;
+    filter.Q.value = preset.filterQ;
     gain.gain.value = volume;
     gain.connect(ctx.destination);
 
-    const buffer = createNoiseBuffer(ctx, soundType);
+    const buffer = createNoiseBuffer(ctx, soundType, mode);
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.loop = true;
-    source.connect(gain);
+    source.connect(filter);
+    filter.connect(gain);
     source.start();
 
     ctxRef.current = ctx;
     sourceRef.current = source;
     gainRef.current = gain;
+    filterRef.current = filter;
 
     setOverlayState({ isPlaying: true, soundType, volume, targetDb, aiGenerating: false, aiPrompt: null });
   }, [stopOverlay]);
@@ -293,6 +386,26 @@ export function useAudioOverlay() {
     setOverlayState((prev) => ({ ...prev, volume }));
   }, []);
 
+  const applyModePreset = useCallback((mode: Mode) => {
+    const preset = MODE_AUDIO_PRESETS[mode];
+    volumeRef.current = preset.volume;
+
+    if (overlayState.isPlaying && overlayState.soundType !== 'ai-generated') {
+      startOverlay(overlayState.soundType, preset.volume, preset.targetDb, mode);
+      return;
+    }
+
+    if (gainRef.current) {
+      gainRef.current.gain.value = preset.volume;
+    }
+
+    setOverlayState((prev) => ({
+      ...prev,
+      volume: preset.volume,
+      targetDb: preset.targetDb,
+    }));
+  }, [overlayState.isPlaying, overlayState.soundType, startOverlay]);
+
   const setSoundType = useCallback((soundType: SoundType) => {
     if (overlayState.isPlaying) {
       startOverlay(soundType, overlayState.volume, overlayState.targetDb);
@@ -307,6 +420,7 @@ export function useAudioOverlay() {
     stopOverlay,
     setVolume,
     setSoundType,
+    applyModePreset,
     generateAiBed,
   };
 }
