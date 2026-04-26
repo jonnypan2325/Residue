@@ -17,7 +17,7 @@ import {
   getUserDataCollection,
   getUsersCollection,
 } from '@/lib/mongodb';
-import { getAgentSet, POOL_SIZE } from '@/lib/agents/pool';
+import { deriveAgentAddress } from '@/lib/agents/derive-address';
 
 
 
@@ -84,16 +84,21 @@ export interface UserDataRecord {
   };
 }
 
+export interface AgentRole {
+  seed: string;
+  address: string;
+  port: number;
+}
+
 export interface UserAgentRecord {
   userId: string;
   email: string;
   agentId: number;
   handle: string;
-  poolIndex: number;
-  orchestrator: { address: string; port: number };
-  perception: { address: string; port: number };
-  correlation: { address: string; port: number };
-  intervention: { address: string; port: number };
+  orchestrator: AgentRole;
+  perception: AgentRole;
+  correlation: AgentRole;
+  intervention: AgentRole;
   createdAt: number;
   updatedAt: number;
 }
@@ -190,60 +195,60 @@ export async function createUser(record: UserRecord): Promise<void> {
   await ensureUserAgent(normalized);
 }
 
+const BASE_PORT = 8770;
+const ROLES = ['perception', 'correlation', 'intervention', 'orchestrator'] as const;
+
+function deriveAgentRole(userId: string, role: string, agentId: number): AgentRole {
+  const seed = `residue-${role}-${userId}`;
+  const address = deriveAgentAddress(seed);
+  const roleOffset = ROLES.indexOf(role as (typeof ROLES)[number]);
+  const port = BASE_PORT + (agentId - 1) * 10 + roleOffset;
+  return { seed, address, port };
+}
+
 export async function ensureUserAgent(
   user: Pick<UserRecord, '_id' | 'email' | 'createdAt'> & { agentId?: number },
 ): Promise<UserAgentRecord> {
+  // Return existing record from MongoDB if already provisioned
+  if (mongoEnabled()) {
+    await ensureMongoIndexes();
+    const col = await userAgentsCol();
+    const existing = await col.findOne({ userId: user._id });
+    if (existing) return existing as unknown as UserAgentRecord;
+  } else {
+    const existing = memUserAgents.get(user._id);
+    if (existing) return existing;
+  }
+
   const agentId = user.agentId ?? 1;
-  const poolIndex = (agentId - 1) % POOL_SIZE;
-  const agentSet = getAgentSet(poolIndex);
   const now = Date.now();
   const record: UserAgentRecord = {
     userId: user._id,
     email: user.email,
     agentId,
     handle: `User_Agent_${agentId}`,
-    poolIndex,
-    orchestrator: {
-      address: agentSet.orchestrator.address,
-      port: agentSet.orchestrator.port,
-    },
-    perception: {
-      address: agentSet.perception.address,
-      port: agentSet.perception.port,
-    },
-    correlation: {
-      address: agentSet.correlation.address,
-      port: agentSet.correlation.port,
-    },
-    intervention: {
-      address: agentSet.intervention.address,
-      port: agentSet.intervention.port,
-    },
+    orchestrator: deriveAgentRole(user._id, 'orchestrator', agentId),
+    perception: deriveAgentRole(user._id, 'perception', agentId),
+    correlation: deriveAgentRole(user._id, 'correlation', agentId),
+    intervention: deriveAgentRole(user._id, 'intervention', agentId),
     createdAt: user.createdAt,
     updatedAt: now,
   };
 
   if (mongoEnabled()) {
-    await ensureMongoIndexes();
     const col = await userAgentsCol();
-    const { createdAt, ...mutableRecord } = record;
-    await col.updateOne(
-      { userId: user._id },
-      {
-        $setOnInsert: { createdAt },
-        $set: { ...mutableRecord, updatedAt: now },
-      },
-      { upsert: true },
-    );
-    return (await col.findOne({ userId: user._id })) ?? record;
+    try {
+      await col.insertOne(record as never);
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'code' in err && (err as { code: number }).code === 11000) {
+        const existing = await col.findOne({ userId: user._id });
+        if (existing) return existing as unknown as UserAgentRecord;
+      }
+      throw err;
+    }
+    return record;
   }
 
-  const existing = memUserAgents.get(user._id);
-  if (existing) {
-    const updated = { ...record, createdAt: existing.createdAt };
-    memUserAgents.set(user._id, updated);
-    return updated;
-  }
   memUserAgents.set(user._id, record);
   return record;
 }
@@ -282,7 +287,7 @@ export async function ensureUserData(
     agent: {
       agentId: agent.agentId,
       handle: agent.handle,
-      poolIndex: agent.poolIndex,
+      poolIndex: 0,
       buddyAddress: agent.orchestrator.address,
       buddyPort: agent.orchestrator.port,
     },
@@ -484,6 +489,57 @@ export async function getActiveSessionForUser(
     startedAt: status.startedAt ?? status.lastActiveAt ?? null,
     endedAt: status.endedAt ?? null,
   };
+}
+
+/**
+ * Mark a study session as started on the user's profile.
+ *
+ * Flips `studyStatus.currentlyStudying` to true, stamps a fresh
+ * `startedAt`, and records `currentSessionId`. Called from the
+ * desktop's "Start Session" button so the iOS companion's
+ * `/api/phone/active-session` poll picks up the rising edge
+ * immediately — without depending on the side-effect of an
+ * acoustic/screen snapshot also being captured (which fails on
+ * insecure-context dev origins where mic/screen capture is blocked).
+ */
+export async function markSessionStarted(
+  userId: string,
+  sessionId: string,
+  mode?: string | null,
+): Promise<void> {
+  const now = Date.now();
+  if (mongoEnabled()) {
+    const col = await userDataCol();
+    await col.updateOne(
+      { userId },
+      {
+        $set: {
+          updatedAt: now,
+          'studyStatus.currentlyStudying': true,
+          'studyStatus.currentSessionId': sessionId,
+          'studyStatus.currentMode': mode ?? null,
+          'studyStatus.startedAt': now,
+          'studyStatus.endedAt': null,
+          'studyStatus.lastActiveAt': now,
+        },
+      },
+      { upsert: true },
+    );
+    return;
+  }
+  const existing = memUserData.get(userId);
+  if (!existing) return;
+  memUserData.set(userId, {
+    ...existing,
+    updatedAt: now,
+    studyStatus: {
+      ...existing.studyStatus,
+      currentlyStudying: true,
+      currentSessionId: sessionId,
+      currentMode: mode ?? existing.studyStatus.currentMode,
+      lastActiveAt: now,
+    },
+  });
 }
 
 /**
