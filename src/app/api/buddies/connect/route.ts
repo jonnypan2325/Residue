@@ -37,10 +37,10 @@ export async function POST(req: NextRequest) {
   type AgentRole = { address: string; port: number; seed?: string };
   const agentAddresses: Record<string, string> | null = buddyAgents
     ? {
-        orchestrator: (buddyAgents.orchestrator as AgentRole).address,
-        perception: (buddyAgents.perception as AgentRole).address,
-        correlation: (buddyAgents.correlation as AgentRole).address,
-        intervention: (buddyAgents.intervention as AgentRole).address,
+        orchestrator: (buddyAgents.orchestrator as AgentRole | undefined)?.address ?? '',
+        perception: (buddyAgents.perception as AgentRole | undefined)?.address ?? '',
+        correlation: (buddyAgents.correlation as AgentRole | undefined)?.address ?? '',
+        intervention: (buddyAgents.intervention as AgentRole | undefined)?.address ?? '',
       }
     : null;
 

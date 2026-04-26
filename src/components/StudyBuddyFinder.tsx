@@ -129,7 +129,7 @@ export default function StudyBuddyFinder({ token, userId, userOptimalRange, eqVe
   const handleDisconnect = useCallback(async (buddyId: string) => {
     if (!token) return;
     try {
-      await fetch('/api/buddies/connect', {
+      const res = await fetch('/api/buddies/connect', {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -137,17 +137,19 @@ export default function StudyBuddyFinder({ token, userId, userOptimalRange, eqVe
         },
         body: JSON.stringify({ buddyId }),
       });
-      setConnectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(buddyId);
-        return next;
-      });
-      setConnectionMap((prev) => {
-        const next = new Map(prev);
-        next.delete(buddyId);
-        return next;
-      });
-      setExpandedId(null);
+      if (res.ok) {
+        setConnectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(buddyId);
+          return next;
+        });
+        setConnectionMap((prev) => {
+          const next = new Map(prev);
+          next.delete(buddyId);
+          return next;
+        });
+        setExpandedId(null);
+      }
     } catch {
       // Disconnect failed
     }
