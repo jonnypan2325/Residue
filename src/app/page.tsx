@@ -517,6 +517,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
 
             {/* Study Buddy Finder */}
             <StudyBuddyFinder
+              token={auth.token}
               userId={auth.user?.uid}
               userOptimalRange={profile?.optimalDbRange}
               eqVector={studyBuddyEqVector}
