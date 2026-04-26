@@ -477,7 +477,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId,
-          user_id: 'user-1',
+          user_id: userId,
           goal_mode: mode,
           acoustic: latestAcousticProfile ? {
             overall_db: latestAcousticProfile.overallDb,
