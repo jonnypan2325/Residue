@@ -1,8 +1,11 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
-import type { CrossAgentMatch } from '@/app/api/agents/cross-match/route';
+import type {
+  CrossAgentMatch,
+  CrossMatchResponse,
+} from '@/app/api/agents/cross-match/route';
 
 interface AgentMatchPanelProps {
   token: string | null;
@@ -10,20 +13,13 @@ interface AgentMatchPanelProps {
 }
 
 interface ActivityEntry {
+  // Stable, per-entry id so React doesn't reuse DOM nodes when entries are
+  // prepended. Multiple appends in the same tick share a timestamp, so we use
+  // a monotonically increasing counter.
+  id: number;
   timestamp: string;
   channel: 'client' | 'correlation' | 'profile-exchange' | 'asi1' | 'system';
   message: string;
-}
-
-interface CrossMatchResponse {
-  user_id: string;
-  top_k: number;
-  matches: CrossAgentMatch[];
-  source: 'agent' | 'sync_fallback';
-  agent_addresses?: {
-    orchestrator?: string;
-    correlation?: string;
-  };
 }
 
 const AGENTVERSE_BASE = 'https://agentverse.ai/agents/details';
@@ -48,12 +44,14 @@ export default function AgentMatchPanel({ token, userId }: AgentMatchPanelProps)
     orchestrator?: string;
     correlation?: string;
   } | null>(null);
+  const activityIdRef = useRef(0);
 
   const appendActivity = useCallback(
     (channel: ActivityEntry['channel'], message: string) => {
+      const id = activityIdRef.current++;
       setActivity((prev) =>
         [
-          { timestamp: new Date().toISOString(), channel, message },
+          { id, timestamp: new Date().toISOString(), channel, message },
           ...prev,
         ].slice(0, 30),
       );
@@ -212,9 +210,9 @@ export default function AgentMatchPanel({ token, userId }: AgentMatchPanelProps)
             Agent message log ({activity.length})
           </summary>
           <div className="mt-2 space-y-1 max-h-56 overflow-y-auto bg-black/40 rounded-lg p-3 font-mono">
-            {activity.map((entry, idx) => (
+            {activity.map((entry) => (
               <div
-                key={idx}
+                key={entry.id}
                 className={`leading-relaxed ${
                   entry.channel === 'profile-exchange'
                     ? 'text-purple-300'

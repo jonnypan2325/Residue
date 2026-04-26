@@ -40,7 +40,11 @@ export interface CrossAgentMatch {
   candidate_profile?: CandidateProfile;
 }
 
-interface CrossMatchResponse {
+/**
+ * Wire shape of POST /api/agents/cross-match.
+ * Exported so client components can import the same definition.
+ */
+export interface CrossMatchResponse {
   user_id: string;
   top_k: number;
   matches: CrossAgentMatch[];
@@ -90,6 +94,8 @@ export async function POST(req: NextRequest) {
     });
 
     if (!pyResponse.ok) {
+      // Log the full orchestrator response server-side for debugging, but never
+      // forward raw stack traces or internal diagnostics to the client.
       const text = await pyResponse.text().catch(() => '');
       console.error(
         `[cross-match] orchestrator returned ${pyResponse.status}:`,
