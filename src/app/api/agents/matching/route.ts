@@ -67,10 +67,10 @@ export async function POST(request: Request) {
 
       for (const user of allUsers) {
         const uid = user.userId as string;
-        const email = user.email as string;
+        const email = user.email as string | undefined;
 
-        // Skip test/placeholder accounts
-        if (email.endsWith('@residue.local')) continue;
+        // Skip test/placeholder accounts or records without email
+        if (!email || email.endsWith('@residue.local')) continue;
 
         const profile = profileMap.get(uid);
         const agents = agentMap.get(uid);
