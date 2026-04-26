@@ -35,6 +35,10 @@ from uagents_core.contrib.protocols.chat import (
 # Load .env from project root so ASI1_API_KEY / MONGODB_URI are available
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+from mongo_loader import get_mongo_context
+
 # pymongo is optional at import-time; we degrade gracefully when missing or
 # when MONGODB_URI is not configured.
 try:

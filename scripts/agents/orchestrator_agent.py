@@ -44,6 +44,7 @@ load_dotenv(_project_root / ".env")
 
 # Ensure sibling agent modules are importable
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
+from mongo_loader import get_mongo_context
 
 
 # ── Shared Message Models (must match other agents) ─────────────────────────
@@ -456,9 +457,13 @@ async def handle_chat_message(ctx: Context, sender: str, msg: ChatMessage):
     _chat_history[sender].append({"role": "user", "content": text})
     _chat_history[sender] = _chat_history[sender][-10:]
 
-    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}] + _chat_history[sender]
+    # Inject real MongoDB data into the system prompt
+    mongo_ctx = get_mongo_context()
+    enriched_prompt = CHAT_SYSTEM_PROMPT + "\n\nReal-time platform data from MongoDB:\n" + mongo_ctx
+
+    messages = [{"role": "system", "content": enriched_prompt}] + _chat_history[sender]
     response_text = ""
-    response_text = call_asi1_mini(CHAT_SYSTEM_PROMPT, text)
+    response_text = call_asi1_mini(enriched_prompt, text)
     if not response_text:
         api_key = os.environ.get("ASI1_API_KEY", "")
         if api_key:
