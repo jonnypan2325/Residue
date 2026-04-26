@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 
 type SoundType = 'brown-noise' | 'pink-noise' | 'white-noise' | 'rain' | 'cafe' | 'binaural' | 'ai-generated';
 
@@ -117,7 +117,10 @@ export function useAudioOverlay() {
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const volumeRef = useRef(overlayState.volume);
-  volumeRef.current = overlayState.volume;
+
+  useEffect(() => {
+    volumeRef.current = overlayState.volume;
+  }, [overlayState.volume]);
 
   const stopOverlay = useCallback(() => {
     if (sourceRef.current) {
@@ -170,7 +173,8 @@ export function useAudioOverlay() {
 
   const generateAiBed = useCallback(async (
     mode: string,
-    profile?: { eqGains: number[]; targetDb: number }
+    profile?: { eqGains: number[]; targetDb: number },
+    userId: string = 'anon',
   ) => {
     stopOverlay();
     setOverlayState((prev) => ({ ...prev, soundType: 'ai-generated', aiGenerating: true, aiPrompt: null }));
@@ -185,7 +189,7 @@ export function useAudioOverlay() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: 'user-1',
+          userId,
           profile: defaultProfile,
           mode,
           count: 1,

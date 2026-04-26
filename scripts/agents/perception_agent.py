@@ -11,13 +11,26 @@ Privacy: Only timing/magnitude data is processed — never keystroke content.
 import os
 import json
 import requests
+from datetime import datetime
+from uuid import uuid4
 from pathlib import Path
 from dotenv import load_dotenv
-from uagents import Agent, Context, Model
+from uagents import Agent, Context, Model, Protocol
 from typing import Optional
+from uagents_core.contrib.protocols.chat import (
+    ChatAcknowledgement,
+    ChatMessage,
+    EndSessionContent,
+    TextContent,
+    chat_protocol_spec,
+)
 
 # Load .env from project root so ASI1_API_KEY is available
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
+import sys
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+from mongo_loader import get_mongo_context
 
 
 # ── Data Models ──────────────────────────────────────────────────────────────
@@ -182,13 +195,22 @@ def rule_based_inference(acoustic_json: Optional[str], behavioral_json: Optional
 def create_agent():
     AGENT_PORT = int(os.environ.get("PERCEPTION_AGENT_PORT", "8770"))
     AGENT_SEED = os.environ.get("PERCEPTION_AGENT_SEED", "residue-perception-agent-seed-phrase-v1")
+    AGENTVERSE_API_KEY = os.environ.get("AGENTVERSE_API_KEY", "").strip()
+
+    agent_kwargs = {
+        "name": "residue_perception_agent",
+        "port": AGENT_PORT,
+        "seed": AGENT_SEED,
+        "publish_agent_details": True,
+    }
+    if AGENTVERSE_API_KEY:
+        agent_kwargs["mailbox"] = True
+    
 
     _agent = Agent(
-        name="residue_perception_agent",
-        port=AGENT_PORT,
-        seed=AGENT_SEED,
-        endpoint=[f"http://localhost:{AGENT_PORT}/submit"],
+        **agent_kwargs,
     )
+    protocol = Protocol(spec=chat_protocol_spec)
 
     print(f"PerceptionAgent address: {_agent.address}")
 
@@ -213,6 +235,131 @@ def create_agent():
 
         await ctx.send(sender, response)
         ctx.logger.info(f"Sent perception: {result['cognitive_state']} ({result['confidence']:.0%} confidence)")
+
+    # Conversation history per sender for contextual responses
+    chat_history: dict[str, list[dict]] = {}
+
+    CHAT_SYSTEM_PROMPT = """You are Residue's Perception Agent — a specialist AI that analyzes acoustic environments
+and behavioral telemetry to infer cognitive states (focused, distracted, idle, transitioning).
+
+You are part of a real multi-agent system built with Fetch.ai uAgents on Agentverse.
+You work alongside an Orchestrator, Correlation Agent, and Intervention Agent.
+
+Your expertise:
+- Interpreting dB levels, 7-band frequency analysis (Sub-bass through Brilliance)
+- Reading behavioral signals: typing speed, error rate, mouse jitter, focus switching
+- Explaining how acoustic environments affect cognition
+- Recommending when to trigger acoustic interventions
+
+Be conversational, helpful, and specific. Use your domain knowledge to give insightful answers.
+Keep responses concise but informative."""
+
+    @protocol.on_message(ChatMessage)
+    async def handle_chat_message(ctx: Context, sender: str, msg: ChatMessage):
+        await ctx.send(
+            sender,
+            ChatAcknowledgement(timestamp=datetime.now(), acknowledged_msg_id=msg.msg_id),
+        )
+
+        text = ""
+        for item in msg.content:
+            if isinstance(item, TextContent):
+                text += item.text
+
+        # Structured agent-to-agent path
+        try:
+            payload = json.loads(text)
+            if payload.get("action") == "perceive":
+                result = infer_cognitive_state(
+                    payload.get("acoustic"),
+                    payload.get("behavioral"),
+                    payload.get("goal_mode", "focus"),
+                )
+                response_text = json.dumps(
+                    {
+                        "action": "perceive_result",
+                        "cognitive_state": result["cognitive_state"],
+                        "confidence": result["confidence"],
+                        "reasoning": result["reasoning"],
+                        "recommendation": result["recommendation"],
+                    }
+                )
+                await ctx.send(
+                    sender,
+                    ChatMessage(
+                        timestamp=datetime.utcnow(),
+                        msg_id=uuid4(),
+                        content=[
+                            TextContent(type="text", text=response_text),
+                            EndSessionContent(type="end-session"),
+                        ],
+                    ),
+                )
+                return
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Natural language — use ASI1-Mini with conversation history
+        if sender not in chat_history:
+            chat_history[sender] = []
+
+        chat_history[sender].append({"role": "user", "content": text})
+        # Keep last 10 messages for context
+        chat_history[sender] = chat_history[sender][-10:]
+
+        # Inject real MongoDB data into the system prompt
+        mongo_ctx = get_mongo_context()
+        enriched_prompt = CHAT_SYSTEM_PROMPT
+        if mongo_ctx:
+            enriched_prompt += "\n\nReal-time platform data from MongoDB:\n" + mongo_ctx
+
+        messages = [{"role": "system", "content": enriched_prompt}] + chat_history[sender]
+
+        response_text = call_asi1_mini(enriched_prompt, text)
+        if not response_text or response_text.startswith("ASI1-Mini"):
+            # Try with full history via direct API call
+            api_key = os.environ.get("ASI1_API_KEY", "")
+            if api_key:
+                try:
+                    import requests as _req
+                    resp = _req.post(
+                        ASI1_API_URL,
+                        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+                        json={"model": "asi1-mini", "messages": messages, "temperature": 0.4, "max_tokens": 512},
+                        timeout=15,
+                    )
+                    if resp.status_code == 200:
+                        response_text = resp.json()["choices"][0]["message"]["content"]
+                except Exception:
+                    pass
+
+        if not response_text or response_text.startswith("ASI1-Mini"):
+            response_text = (
+                "I'm the Perception Agent — I analyze acoustic environments and behavioral signals "
+                "to infer your cognitive state. What would you like to know about how sound affects focus?"
+            )
+
+        chat_history[sender].append({"role": "assistant", "content": response_text})
+        chat_history[sender] = chat_history[sender][-10:]
+
+        await ctx.send(
+            sender,
+            ChatMessage(
+                timestamp=datetime.utcnow(),
+                msg_id=uuid4(),
+                content=[
+                    TextContent(type="text", text=response_text),
+                    EndSessionContent(type="end-session"),
+                ],
+            ),
+        )
+
+    @protocol.on_message(ChatAcknowledgement)
+    async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
+        _ = (ctx, sender, msg)
+        return
+
+    _agent.include(protocol, publish_manifest=True)
 
     return _agent
 

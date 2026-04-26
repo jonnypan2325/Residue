@@ -25,9 +25,11 @@ Usage:
 import os
 import json
 import asyncio
+import math
 from datetime import datetime
 from uuid import uuid4
 from pathlib import Path
+from typing import Optional
 
 # Load .env from project root
 project_root = Path(__file__).parent.parent.parent
@@ -36,8 +38,12 @@ if env_file.exists():
     from dotenv import load_dotenv
     load_dotenv(env_file)
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+from mongo_loader import get_mongo_context
+
 from openai import OpenAI
-from uagents import Context, Protocol, Agent
+from uagents import Context, Protocol, Agent, Model
 from uagents_core.contrib.protocols.chat import (
     ChatAcknowledgement,
     ChatMessage,
@@ -45,6 +51,133 @@ from uagents_core.contrib.protocols.chat import (
     TextContent,
     chat_protocol_spec,
 )
+
+
+# ── Matching Models + Utilities (centralized in gateway) ─────────────────────
+
+
+class MatchRequest(Model):
+    user_id: str
+    eq_vector: list[float]
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    radius_km: float = 50.0
+    active_only: bool = False
+
+
+class MatchResponse(Model):
+    matches: list[dict]
+    source: str = "gateway"
+
+
+DEMO_PROFILES = [
+    {
+        "userId": "demo-alex",
+        "name": "Alex K.",
+        "eqVector": [0.3, 0.4, 0.5, 0.4, 0.3, 0.2, 0.1],
+        "optimalDbRange": [40, 55],
+        "location": {"lat": 34.0689, "lng": -118.4452, "label": "UCLA Library"},
+        "currentlyStudying": True,
+    },
+    {
+        "userId": "demo-sarah",
+        "name": "Sarah M.",
+        "eqVector": [0.2, 0.3, 0.6, 0.5, 0.4, 0.3, 0.2],
+        "optimalDbRange": [45, 60],
+        "location": {"lat": 34.0537, "lng": -118.4368, "label": "Starbucks - Westwood"},
+        "currentlyStudying": True,
+    },
+    {
+        "userId": "demo-james",
+        "name": "James R.",
+        "eqVector": [0.5, 0.4, 0.3, 0.3, 0.2, 0.1, 0.1],
+        "optimalDbRange": [35, 50],
+        "location": {"lat": 34.0700, "lng": -118.4400, "label": "Home"},
+        "currentlyStudying": False,
+    },
+    {
+        "userId": "demo-priya",
+        "name": "Priya D.",
+        "eqVector": [0.2, 0.3, 0.4, 0.6, 0.5, 0.4, 0.3],
+        "optimalDbRange": [50, 65],
+        "location": {"lat": 34.0195, "lng": -118.4912, "label": "Coffee Bean - Santa Monica"},
+        "currentlyStudying": True,
+    },
+    {
+        "userId": "demo-mike",
+        "name": "Mike T.",
+        "eqVector": [0.4, 0.5, 0.4, 0.3, 0.2, 0.15, 0.1],
+        "optimalDbRange": [42, 58],
+        "location": {"lat": 34.0715, "lng": -118.4510, "label": "Dorm Room"},
+        "currentlyStudying": False,
+    },
+]
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b) or len(a) == 0:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    mag_a = math.sqrt(sum(x * x for x in a))
+    mag_b = math.sqrt(sum(x * x for x in b))
+    if mag_a == 0 or mag_b == 0:
+        return 0.0
+    return dot / (mag_a * mag_b)
+
+
+def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    radius = 6371.0
+    d_lat = math.radians(lat2 - lat1)
+    d_lng = math.radians(lng2 - lng1)
+    a = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(d_lng / 2) ** 2
+    )
+    return radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def find_matches(request: dict, profiles: list[dict]) -> list[dict]:
+    eq_vector = request.get("eq_vector", [])
+    user_id = request.get("user_id", "")
+    lat = request.get("lat")
+    lng = request.get("lng")
+    radius_km = request.get("radius_km", 50.0)
+    active_only = request.get("active_only", False)
+
+    candidates = [p for p in profiles if p["userId"] != user_id]
+    if active_only:
+        candidates = [p for p in candidates if p.get("currentlyStudying")]
+
+    if lat is not None and lng is not None:
+        filtered = []
+        for profile in candidates:
+            loc = profile.get("location")
+            if not loc:
+                filtered.append(profile)
+                continue
+            if haversine_km(lat, lng, loc["lat"], loc["lng"]) <= radius_km:
+                filtered.append(profile)
+        candidates = filtered
+
+    results: list[dict] = []
+    for profile in candidates:
+        similarity = cosine_similarity(eq_vector, profile["eqVector"])
+        results.append(
+            {
+                "userId": profile["userId"],
+                "name": profile["name"],
+                "similarity": round(similarity, 4),
+                "optimalDbRange": profile["optimalDbRange"],
+                "eqVector": profile["eqVector"],
+                "location": profile.get("location", {}).get("label"),
+                "currentlyStudying": profile.get("currentlyStudying", False),
+            }
+        )
+
+    results.sort(key=lambda x: x["similarity"], reverse=True)
+    return results[:10]
 
 
 # ── ASI1-Mini Client ─────────────────────────────────────────────────────────
@@ -84,6 +217,9 @@ protocol = Protocol(spec=chat_protocol_spec)
 
 # Track pending buddy matching requests
 pending_matches: dict[str, dict] = {}
+
+# Conversation history per sender for contextual responses
+gateway_chat_history: dict[str, list[dict]] = {}
 
 
 # ── System Prompt ─────────────────────────────────────────────────────────────
@@ -225,6 +361,21 @@ async def coordinate_buddy_matching(ctx: Context, user_query: str) -> str:
 
 # ── Chat Protocol Handler ────────────────────────────────────────────────────
 
+
+@agent.on_message(MatchRequest)
+async def handle_match_request(ctx: Context, sender: str, msg: MatchRequest):
+    """Serve direct matching requests on the gateway agent."""
+    request_dict = {
+        "user_id": msg.user_id,
+        "eq_vector": msg.eq_vector,
+        "lat": msg.lat,
+        "lng": msg.lng,
+        "radius_km": msg.radius_km,
+        "active_only": msg.active_only,
+    }
+    matches = find_matches(request_dict, DEMO_PROFILES)
+    await ctx.send(sender, MatchResponse(matches=matches))
+
 @protocol.on_message(ChatMessage)
 async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     ctx.logger.info(f"Chat message from {sender}")
@@ -259,34 +410,47 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     intent = detect_intent(text)
     ctx.logger.info(f"Detected intent: {intent}")
 
+    # Build conversation history for context
+    if sender not in gateway_chat_history:
+        gateway_chat_history[sender] = []
+    gateway_chat_history[sender].append({"role": "user", "content": text})
+    gateway_chat_history[sender] = gateway_chat_history[sender][-10:]
+
     if intent == "study_buddy":
         # Coordinate with Study Buddy agents
         ctx.logger.info("Coordinating study buddy matching...")
         response_text = await coordinate_buddy_matching(ctx, text)
     else:
-        # General query — use ASI1-Mini directly
+        # General query — use ASI1-Mini with conversation history
         response_text = (
             "I apologize, but I'm having trouble processing your request right now. "
             "Please try again in a moment."
         )
         try:
-            # Include buddy agent info in context
             buddy_info = ""
             if BUDDY_ADDRESSES:
                 buddy_info = f"\n\nYou have {len(BUDDY_ADDRESSES)} Study Buddy agents connected: {', '.join(a[:15] + '...' for a in BUDDY_ADDRESSES)}"
 
+            # Inject real MongoDB data into the system prompt
+            mongo_ctx = get_mongo_context()
+            enriched_prompt = SYSTEM_PROMPT + buddy_info
+            if mongo_ctx:
+                enriched_prompt += "\n\nReal-time platform data from MongoDB:\n" + mongo_ctx
+
+            messages = [{"role": "system", "content": enriched_prompt}] + gateway_chat_history[sender]
+
             r = client.chat.completions.create(
                 model="asi1-mini",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT + buddy_info},
-                    {"role": "user", "content": text},
-                ],
+                messages=messages,
                 max_tokens=1024,
                 temperature=0.4,
             )
             response_text = str(r.choices[0].message.content)
         except Exception as e:
             ctx.logger.exception(f"Error querying ASI1-Mini: {e}")
+
+    gateway_chat_history[sender].append({"role": "assistant", "content": response_text})
+    gateway_chat_history[sender] = gateway_chat_history[sender][-10:]
 
     # Send response
     await ctx.send(

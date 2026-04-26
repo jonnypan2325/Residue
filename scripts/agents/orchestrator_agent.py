@@ -26,8 +26,17 @@ import requests as http_requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from dotenv import load_dotenv
-from uagents import Agent, Context, Model
+from datetime import datetime
+from uuid import uuid4
+from uagents import Agent, Context, Model, Protocol
 from typing import Optional
+from uagents_core.contrib.protocols.chat import (
+    ChatAcknowledgement,
+    ChatMessage,
+    EndSessionContent,
+    TextContent,
+    chat_protocol_spec,
+)
 
 # Load .env from project root so ASI1_API_KEY and other secrets are available
 _project_root = Path(__file__).parent.parent.parent
@@ -35,6 +44,7 @@ load_dotenv(_project_root / ".env")
 
 # Ensure sibling agent modules are importable
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
+from mongo_loader import get_mongo_context
 
 
 # ── Shared Message Models (must match other agents) ─────────────────────────
@@ -92,6 +102,14 @@ class OrchestrateRequest(Model):
     behavioral_json: str
     sessions_json: str  # historical session data for correlation
 
+class FindMatchesRequest(Model):
+    user_id: str
+    top_k: int = 5
+
+class FindMatchesResponse(Model):
+    user_id: str
+    matches_json: str
+
 class OrchestrateResponse(Model):
     """Combined response from the multi-agent pipeline."""
     session_id: str
@@ -143,23 +161,30 @@ def call_asi1_mini(system_prompt: str, user_prompt: str) -> str:
 
 AGENT_PORT = int(os.environ.get("ORCHESTRATOR_AGENT_PORT", "8773"))
 AGENT_SEED = os.environ.get("ORCHESTRATOR_AGENT_SEED", "residue-orchestrator-agent-seed-phrase-v1")
+AGENTVERSE_API_KEY = os.environ.get("AGENTVERSE_API_KEY", "").strip()
 
 # Agent addresses (populated at startup or from env)
 PERCEPTION_ADDRESS = os.environ.get("PERCEPTION_AGENT_ADDRESS", "")
 CORRELATION_ADDRESS = os.environ.get("CORRELATION_AGENT_ADDRESS", "")
 INTERVENTION_ADDRESS = os.environ.get("INTERVENTION_AGENT_ADDRESS", "")
 
-agent = Agent(
-    name="residue_orchestrator",
-    port=AGENT_PORT,
-    seed=AGENT_SEED,
-    endpoint=[f"http://localhost:{AGENT_PORT}/submit"],
-)
+agent_kwargs = {
+    "name": "residue_orchestrator",
+    "port": AGENT_PORT,
+    "seed": AGENT_SEED,
+    "publish_agent_details": True,
+}
+if AGENTVERSE_API_KEY:
+    agent_kwargs["mailbox"] = True
+
+agent = Agent(**agent_kwargs)
+protocol = Protocol(spec=chat_protocol_spec)
 
 print(f"OrchestratorAgent address: {agent.address}")
 
-# Store pending responses
+# Store pending responses (written by async agent handlers, read by HTTP thread)
 pending_responses: dict[str, dict] = {}
+_pending_lock = threading.Lock()
 
 
 @agent.on_event("startup")
@@ -177,16 +202,17 @@ async def handle_orchestrate(ctx: Context, sender: str, msg: OrchestrateRequest)
     ctx.logger.info(f"Orchestration request from {sender}: session={msg.session_id}")
 
     # Initialize response tracking
-    pending_responses[msg.session_id] = {
-        "sender": sender,
-        "user_id": msg.user_id,
-        "goal_mode": msg.goal_mode,
-        "acoustic_json": msg.acoustic_json,
-        "behavioral_json": msg.behavioral_json,
-        "perception": None,
-        "correlation": None,
-        "intervention": None,
-    }
+    with _pending_lock:
+        pending_responses[msg.session_id] = {
+            "sender": sender,
+            "user_id": msg.user_id,
+            "goal_mode": msg.goal_mode,
+            "acoustic_json": msg.acoustic_json,
+            "behavioral_json": msg.behavioral_json,
+            "perception": None,
+            "correlation": None,
+            "intervention": None,
+        }
 
     # Step 1: Send to PerceptionAgent
     if PERCEPTION_ADDRESS:
@@ -214,16 +240,16 @@ async def handle_perception_response(ctx: Context, sender: str, msg: PerceptionR
     """Receive perception result and trigger intervention."""
     ctx.logger.info(f"Perception response for session {msg.session_id}: {msg.cognitive_state}")
 
-    session = pending_responses.get(msg.session_id)
-    if not session:
-        return
-
-    session["perception"] = {
-        "cognitive_state": msg.cognitive_state,
-        "confidence": msg.confidence,
-        "reasoning": msg.reasoning,
-        "recommendation": msg.recommendation,
-    }
+    with _pending_lock:
+        session = pending_responses.get(msg.session_id)
+        if not session:
+            return
+        session["perception"] = {
+            "cognitive_state": msg.cognitive_state,
+            "confidence": msg.confidence,
+            "reasoning": msg.reasoning,
+            "recommendation": msg.recommendation,
+        }
 
     # Now trigger InterventionAgent with perception + any correlation data
     if INTERVENTION_ADDRESS:
@@ -255,19 +281,41 @@ async def handle_correlation_response(ctx: Context, sender: str, msg: Correlatio
     """Receive correlation result."""
     ctx.logger.info(f"Correlation response for user {msg.user_id}: {msg.optimal_db} dB")
 
-    # Find the session for this user
-    for session_id, session in pending_responses.items():
-        if session["user_id"] == msg.user_id:
-            session["correlation"] = {
-                "optimal_db": msg.optimal_db,
-                "db_range": msg.db_range,
-                "eq_gains": msg.eq_gains,
-                "preferred_bands": msg.preferred_bands,
-                "confidence": msg.confidence,
-                "insight": msg.insight,
-                "data_points": msg.data_points,
-            }
-            break
+    # Find the session for this user and update atomically under lock
+    with _pending_lock:
+        for session_id, session in pending_responses.items():
+            if session.get("user_id") == msg.user_id:
+                session["correlation"] = {
+                    "optimal_db": msg.optimal_db,
+                    "db_range": msg.db_range,
+                    "eq_gains": msg.eq_gains,
+                    "preferred_bands": msg.preferred_bands,
+                    "confidence": msg.confidence,
+                    "insight": msg.insight,
+                    "data_points": msg.data_points,
+                }
+                break
+
+
+@agent.on_message(FindMatchesResponse)
+async def handle_find_matches_response(ctx: Context, sender: str, msg: FindMatchesResponse):
+    """Receive cross-agent match results from the CorrelationAgent."""
+    ctx.logger.info(f"FindMatches response for user {msg.user_id}")
+    try:
+        matches = json.loads(msg.matches_json or "[]")
+    except json.JSONDecodeError:
+        matches = []
+
+    # Store keyed by user_id so the HTTP fallback (or polling clients) can
+    # retrieve the most recent match results.
+    with _pending_lock:
+        pending_responses[f"match:{msg.user_id}"] = {
+            "complete": True,
+            "result": {
+                "user_id": msg.user_id,
+                "matches": matches,
+            },
+        }
 
 
 @agent.on_message(InterventionResponse)
@@ -275,17 +323,17 @@ async def handle_intervention_response(ctx: Context, sender: str, msg: Intervent
     """Receive intervention result and send combined response back to client."""
     ctx.logger.info(f"Intervention response for session {msg.session_id}: {msg.bed_selection}")
 
-    session = pending_responses.get(msg.session_id)
-    if not session:
-        return
-
-    session["intervention"] = {
-        "bed_selection": msg.bed_selection,
-        "eq_profile": msg.eq_profile,
-        "volume_target": msg.volume_target,
-        "reasoning": msg.reasoning,
-        "gap_analysis": msg.gap_analysis_json,
-    }
+    with _pending_lock:
+        session = pending_responses.get(msg.session_id)
+        if not session:
+            return
+        session["intervention"] = {
+            "bed_selection": msg.bed_selection,
+            "eq_profile": msg.eq_profile,
+            "volume_target": msg.volume_target,
+            "reasoning": msg.reasoning,
+            "gap_analysis": msg.gap_analysis_json,
+        }
 
     # Build combined response
     perception = session.get("perception", {})
@@ -308,20 +356,157 @@ async def handle_intervention_response(ctx: Context, sender: str, msg: Intervent
         await ctx.send(session["sender"], response)
         ctx.logger.info(f"Sent orchestrated response to {session['sender']}")
 
-    # Store result for HTTP polling
-    session["complete"] = True
-    session["result"] = {
-        "session_id": msg.session_id,
-        "cognitive_state": perception.get("cognitive_state", "idle"),
-        "confidence": perception.get("confidence", 0),
-        "perception_reasoning": perception.get("reasoning", ""),
-        "bed_selection": msg.bed_selection,
-        "eq_profile": msg.eq_profile,
-        "volume_target": msg.volume_target,
-        "intervention_reasoning": msg.reasoning,
-        "correlation_insight": correlation.get("insight", ""),
-        "correlation_confidence": correlation.get("confidence", 0),
-    }
+    # Store result for HTTP polling (lock so HTTP thread sees complete atomically)
+    with _pending_lock:
+        session["complete"] = True
+        session["result"] = {
+            "session_id": msg.session_id,
+            "cognitive_state": perception.get("cognitive_state", "idle"),
+            "confidence": perception.get("confidence", 0),
+            "perception_reasoning": perception.get("reasoning", ""),
+            "bed_selection": msg.bed_selection,
+            "eq_profile": msg.eq_profile,
+            "volume_target": msg.volume_target,
+            "intervention_reasoning": msg.reasoning,
+            "correlation_insight": correlation.get("insight", ""),
+            "correlation_confidence": correlation.get("confidence", 0),
+        }
+
+
+# Conversation history per sender for contextual responses
+_chat_history: dict[str, list[dict]] = {}
+
+CHAT_SYSTEM_PROMPT = """You are Residue's Orchestrator Agent — the central coordinator of a multi-agent
+acoustic intelligence system built with Fetch.ai uAgents on Agentverse.
+
+You coordinate a pipeline of specialized agents:
+- Perception Agent: analyzes acoustic environments and behavioral telemetry to infer cognitive state
+- Correlation Agent: builds personalized acoustic profiles from historical session data
+- Intervention Agent: designs acoustic interventions (sound beds, EQ profiles, volume targets)
+
+Your expertise:
+- Orchestrating the full perception → correlation → intervention pipeline
+- Explaining how the multi-agent system works together
+- Discussing acoustic intelligence, cognitive state inference, and personalized soundscapes
+- Understanding the Residue platform: Next.js 16 + React 19 + MongoDB Atlas + ElevenLabs
+- Privacy-first: only timing/magnitude data is processed, never keystroke content
+
+Be conversational, helpful, and specific. You understand the full system architecture.
+Keep responses concise but informative."""
+
+
+@protocol.on_message(ChatMessage)
+async def handle_chat_message(ctx: Context, sender: str, msg: ChatMessage):
+    await ctx.send(
+        sender,
+        ChatAcknowledgement(timestamp=datetime.now(), acknowledged_msg_id=msg.msg_id),
+    )
+
+    text = ""
+    for item in msg.content:
+        if isinstance(item, TextContent):
+            text += item.text
+
+    # Structured agent-to-agent path
+    try:
+        payload = json.loads(text)
+        if payload.get("action") == "orchestrate":
+            from perception_agent import infer_cognitive_state
+            from correlation_agent import build_optimal_profile
+            from intervention_agent import compute_intervention
+
+            acoustic = payload.get("acoustic")
+            behavioral = payload.get("behavioral")
+            sessions = payload.get("sessions", [])
+            goal_mode = payload.get("goal_mode", "focus")
+
+            acoustic_json = json.dumps(acoustic) if isinstance(acoustic, dict) else (acoustic or "")
+            behavioral_json = (
+                json.dumps(behavioral) if isinstance(behavioral, dict) else (behavioral or "")
+            )
+
+            perception = infer_cognitive_state(acoustic_json, behavioral_json, goal_mode)
+            correlation = build_optimal_profile(json.dumps(sessions)) if sessions else {}
+            profile_json = json.dumps(correlation) if correlation and "error" not in correlation else ""
+
+            acoustic_obj = acoustic if isinstance(acoustic, dict) else {}
+            intervention = compute_intervention(
+                goal_mode,
+                float(acoustic_obj.get("overall_db", 50)),
+                acoustic_obj.get("frequency_bands", [0] * 7),
+                perception.get("cognitive_state", "idle"),
+                profile_json,
+            )
+
+            response_text = json.dumps(
+                {
+                    "action": "orchestrate_result",
+                    "perception": perception,
+                    "correlation": correlation,
+                    "intervention": intervention,
+                }
+            )
+            await ctx.send(sender, ChatMessage(timestamp=datetime.utcnow(), msg_id=uuid4(), content=[TextContent(type="text", text=response_text), EndSessionContent(type="end-session")]))
+            return
+    except Exception:
+        pass
+
+    # Natural language — use ASI1-Mini with conversation history
+    if sender not in _chat_history:
+        _chat_history[sender] = []
+    _chat_history[sender].append({"role": "user", "content": text})
+    _chat_history[sender] = _chat_history[sender][-10:]
+
+    # Inject real MongoDB data into the system prompt
+    mongo_ctx = get_mongo_context()
+    enriched_prompt = CHAT_SYSTEM_PROMPT
+    if mongo_ctx:
+        enriched_prompt += "\n\nReal-time platform data from MongoDB:\n" + mongo_ctx
+
+    messages = [{"role": "system", "content": enriched_prompt}] + _chat_history[sender]
+    response_text = ""
+    response_text = call_asi1_mini(enriched_prompt, text)
+    if not response_text:
+        api_key = os.environ.get("ASI1_API_KEY", "")
+        if api_key:
+            try:
+                resp = http_requests.post(
+                    ASI1_API_URL,
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+                    json={"model": "asi1-mini", "messages": messages, "temperature": 0.4, "max_tokens": 512},
+                    timeout=15,
+                )
+                if resp.status_code == 200:
+                    response_text = resp.json()["choices"][0]["message"]["content"]
+            except Exception:
+                pass
+
+    if not response_text:
+        response_text = (
+            "I'm the Orchestrator Agent — I coordinate Residue's multi-agent acoustic intelligence pipeline. "
+            "Ask me about how the system works, or send structured data for a full analysis!"
+        )
+
+    _chat_history[sender].append({"role": "assistant", "content": response_text})
+    _chat_history[sender] = _chat_history[sender][-10:]
+
+    await ctx.send(
+        sender,
+        ChatMessage(
+            timestamp=datetime.utcnow(),
+            msg_id=uuid4(),
+            content=[
+                TextContent(type="text", text=response_text),
+                EndSessionContent(type="end-session"),
+            ],
+        ),
+    )
+
+
+@protocol.on_message(ChatAcknowledgement)
+async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
+    _ = (ctx, sender, msg)
+    return
 
 
 # ── HTTP API for Next.js Frontend ────────────────────────────────────────────
@@ -340,6 +525,8 @@ class OrchestratorHTTPHandler(BaseHTTPRequestHandler):
             self._handle_intervene()
         elif self.path == "/status":
             self._handle_status()
+        elif self.path == "/match":
+            self._handle_match()
         else:
             self.send_error(404)
 
@@ -357,7 +544,8 @@ class OrchestratorHTTPHandler(BaseHTTPRequestHandler):
             })
         elif self.path.startswith("/result/"):
             session_id = self.path.split("/result/")[1]
-            session = pending_responses.get(session_id)
+            with _pending_lock:
+                session = pending_responses.get(session_id)
             if session and session.get("complete"):
                 self._json_response(200, session["result"])
             else:
@@ -463,10 +651,53 @@ class OrchestratorHTTPHandler(BaseHTTPRequestHandler):
 
         self._json_response(200, result)
 
+    def _handle_match(self):
+        """Find users with similar acoustic profiles via cross-agent matching.
+
+        We always run the synchronous in-process fallback (same pattern as
+        _handle_orchestrate, which imports and calls agent functions
+        directly). When CORRELATION_ADDRESS is set we additionally check
+        pending_responses for a recent agent-routed FindMatchesResponse and
+        prefer it — those are populated by the on_message handler when
+        another agent (or this orchestrator) sends the CorrelationAgent a
+        FindMatchesRequest over the uAgents bus.
+        """
+        body = self._read_body()
+        user_id = body.get("user_id", "")
+        top_k = int(body.get("top_k", 5))
+
+        if not user_id:
+            self._json_response(400, {"error": "user_id is required"})
+            return
+
+        # Synchronous in-process fallback (always safe to run)
+        from correlation_agent import find_matches_for_user
+        sync_matches = find_matches_for_user(user_id, top_k=top_k)
+
+        agent_matches: Optional[list] = None
+        if CORRELATION_ADDRESS:
+            with _pending_lock:
+                entry = pending_responses.get(f"match:{user_id}")
+            if entry and entry.get("complete"):
+                agent_matches = entry["result"].get("matches", [])
+
+        result = {
+            "user_id": user_id,
+            "top_k": top_k,
+            "matches": agent_matches if agent_matches is not None else sync_matches,
+            "source": "agent" if agent_matches is not None else "sync_fallback",
+            "agent_addresses": {
+                "orchestrator": agent.address,
+                "correlation": CORRELATION_ADDRESS or "local",
+            },
+        }
+        self._json_response(200, result)
+
     def _handle_status(self):
         body = self._read_body()
         session_id = body.get("session_id", "")
-        session = pending_responses.get(session_id)
+        with _pending_lock:
+            session = pending_responses.get(session_id)
         if session and session.get("complete"):
             self._json_response(200, {"status": "complete", "result": session["result"]})
         elif session:
@@ -508,6 +739,9 @@ def run_http_server():
     server = HTTPServer(("0.0.0.0", HTTP_PORT), OrchestratorHTTPHandler)
     print(f"Orchestrator HTTP API running on port {HTTP_PORT}")
     server.serve_forever()
+
+
+agent.include(protocol, publish_manifest=True)
 
 
 if __name__ == "__main__":

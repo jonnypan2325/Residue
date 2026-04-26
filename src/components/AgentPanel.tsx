@@ -2,13 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-interface AgentInfo {
+interface AgentEntry {
   address: string;
   port: number;
   name: string;
   role: string;
-  chat_url?: string;
-  status?: 'online' | 'offline' | 'checking';
 }
 
 interface AgentActivity {
@@ -18,27 +16,46 @@ interface AgentActivity {
   detail: string;
 }
 
-interface AgentAddresses {
-  gateway: AgentInfo;
-  buddy_user: AgentInfo;
-  buddy_peer: AgentInfo;
+interface AgentPanelProps {
+  token: string | null;
+  userId: string | null;
 }
 
-export default function AgentPanel() {
-  const [agents, setAgents] = useState<AgentAddresses | null>(null);
+export default function AgentPanel({ token, userId }: AgentPanelProps) {
+  const [allAgents, setAllAgents] = useState<Record<string, AgentEntry> | null>(null);
+  const [gatewayReady, setGatewayReady] = useState(false);
   const [activities, setActivities] = useState<AgentActivity[]>([]);
   const [expanded, setExpanded] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
   const [chatResult, setChatResult] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
 
-  // Fetch agent addresses from API
-  const fetchAgentStatus = useCallback(async () => {
+  // Fetch the logged-in user's assigned agent
+  const fetchMyAgent = useCallback(async () => {
+    if (!token) {
+      setAllAgents(null);
+      return;
+    }
+    try {
+      const res = await fetch('/api/agents/my-agent', {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.agents) setAllAgents(data.agents);
+      }
+    } catch {
+      // API not available
+    }
+  }, [token]);
+
+  // Probe gateway liveness (for Test Agent Pipeline)
+  const probeGateway = useCallback(async () => {
     try {
       const res = await fetch('/api/agents/status');
       if (res.ok) {
         const data = await res.json();
-        setAgents(data.agents);
+        setGatewayReady(Boolean(data.agents?.orchestrator));
         if (data.activity) {
           setActivities((prev) => {
             const combined = [...data.activity, ...prev];
@@ -52,13 +69,20 @@ export default function AgentPanel() {
   }, []);
 
   useEffect(() => {
-    fetchAgentStatus();
-    const interval = setInterval(fetchAgentStatus, 10000);
-    return () => clearInterval(interval);
-  }, [fetchAgentStatus]);
+    const refresh = () => {
+      void fetchMyAgent();
+      void probeGateway();
+    };
+    const timeout = window.setTimeout(refresh, 0);
+    const interval = window.setInterval(refresh, 10000);
+    return () => {
+      window.clearTimeout(timeout);
+      window.clearInterval(interval);
+    };
+  }, [fetchMyAgent, probeGateway]);
 
-  const copyAddress = (address: string, label: string) => {
-    navigator.clipboard.writeText(address);
+  const copyText = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
     setCopied(label);
     setTimeout(() => setCopied(null), 2000);
   };
@@ -67,9 +91,8 @@ export default function AgentPanel() {
     window.open('https://asi1.ai/chat', '_blank');
   };
 
-  // Quick agent test — ask the gateway a question
   const testAgentChat = async () => {
-    if (!agents?.gateway?.address) return;
+    if (!gatewayReady) return;
     setChatLoading(true);
     setChatResult(null);
     try {
@@ -78,7 +101,7 @@ export default function AgentPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: `test-${Date.now()}`,
-          user_id: 'user-1',
+          user_id: userId ?? 'anon',
           goal_mode: 'focus',
           acoustic: {
             overall_db: 48,
@@ -89,7 +112,6 @@ export default function AgentPanel() {
         }),
       });
       const data = await res.json();
-      // Handle both flat (Python orchestrator) and nested (in-process fallback) response shapes
       const cogState = data.cognitive_state ?? data.perception?.cognitive_state ?? 'unknown';
       const reasoning = data.perception_reasoning ?? data.perception?.reasoning ?? '';
       const conf = data.confidence ?? data.perception?.confidence ?? 0;
@@ -123,7 +145,7 @@ export default function AgentPanel() {
         className="flex justify-between items-center w-full text-left"
       >
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+          <div className="w-6 h-6 rounded bg-linear-to-br from-blue-500 to-purple-600 flex items-center justify-center">
             <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
@@ -143,10 +165,64 @@ export default function AgentPanel() {
 
       {expanded && (
         <div className="space-y-3">
+          {/* Auth gate */}
+          {!token ? (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-xs text-gray-400">
+                Sign in to view your assigned agents.
+              </p>
+            </div>
+          ) : allAgents ? (
+            <div className="space-y-2">
+              {(['orchestrator', 'perception', 'correlation', 'intervention'] as const).map((key) => {
+                const agent = allAgents[key];
+                if (!agent) return null;
+                const copyKey = `addr-${key}`;
+                return (
+                  <div key={key} className="bg-gray-800/50 rounded-lg p-3 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${statusDot()}`} />
+                      <span className="text-xs font-medium text-white">{agent.name}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded text-green-400 bg-green-500/10">
+                        {agent.role}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[10px] font-mono text-gray-500 flex-1">
+                        {agent.address.length > 20
+                          ? `${agent.address.slice(0, 12)}...${agent.address.slice(-8)}`
+                          : agent.address}
+                      </p>
+                      <button
+                        onClick={() => copyText(agent.address, copyKey)}
+                        className="p-1 rounded hover:bg-gray-700/50 transition-colors"
+                        title="Copy agent address"
+                      >
+                        {copied === copyKey ? (
+                          <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : (
+                          <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <p className="text-xs text-gray-500">Loading agents...</p>
+            </div>
+          )}
+
           {/* Chat with Agent Button */}
           <button
             onClick={openASIOneChat}
-            className="w-full p-3 rounded-lg bg-gradient-to-r from-blue-500/20 to-purple-500/20 border border-blue-500/30 hover:border-blue-500/50 transition-all text-left"
+            className="w-full p-3 rounded-lg bg-linear-to-r from-blue-500/20 to-purple-500/20 border border-blue-500/30 hover:border-blue-500/50 transition-all text-left"
           >
             <div className="flex items-center justify-between">
               <div>
@@ -162,57 +238,6 @@ export default function AgentPanel() {
               </div>
             </div>
           </button>
-
-          {/* Agent Addresses */}
-          <div className="space-y-2">
-            <p className="text-xs text-gray-400 font-medium">Agent Addresses</p>
-
-            {agents ? (
-              <>
-                {/* Gateway Agent */}
-                <AgentRow
-                  label="Gateway Agent"
-                  address={agents.gateway?.address || ''}
-                  status={agents.gateway?.status}
-                  role="gateway"
-                  onCopy={() => copyAddress(agents.gateway?.address || '', 'gateway')}
-                  isCopied={copied === 'gateway'}
-                  statusDot={statusDot}
-                />
-
-                {/* Study Buddy User */}
-                <AgentRow
-                  label="Your Study Buddy"
-                  address={agents.buddy_user?.address || ''}
-                  status={agents.buddy_user?.status}
-                  role="user"
-                  onCopy={() => copyAddress(agents.buddy_user?.address || '', 'buddy_user')}
-                  isCopied={copied === 'buddy_user'}
-                  statusDot={statusDot}
-                />
-
-                {/* Study Buddy Peer */}
-                <AgentRow
-                  label="Peer Study Buddy"
-                  address={agents.buddy_peer?.address || ''}
-                  status={agents.buddy_peer?.status}
-                  role="peer"
-                  onCopy={() => copyAddress(agents.buddy_peer?.address || '', 'buddy_peer')}
-                  isCopied={copied === 'buddy_peer'}
-                  statusDot={statusDot}
-                />
-              </>
-            ) : (
-              <div className="bg-gray-800/50 rounded-lg p-3">
-                <p className="text-xs text-gray-500">
-                  Agent addresses will appear here when the agent mesh is running.
-                </p>
-                <p className="text-xs text-gray-600 mt-1">
-                  Run: <code className="text-cyan-400/70">python scripts/agents/run_agent_mesh.py</code>
-                </p>
-              </div>
-            )}
-          </div>
 
           {/* Quick Test */}
           <div className="space-y-2">
@@ -254,69 +279,6 @@ export default function AgentPanel() {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-
-// ── Sub-component: Agent Row ────────────────────────────────────────────────
-
-function AgentRow({
-  label,
-  address,
-  status,
-  role,
-  onCopy,
-  isCopied,
-  statusDot,
-}: {
-  label: string;
-  address: string;
-  status?: string;
-  role: string;
-  onCopy: () => void;
-  isCopied: boolean;
-  statusDot: (s?: string) => string;
-}) {
-  if (!address) return null;
-
-  const truncated = address.length > 20
-    ? `${address.slice(0, 12)}...${address.slice(-8)}`
-    : address;
-
-  const roleColors: Record<string, string> = {
-    gateway: 'text-blue-400 bg-blue-500/10',
-    user: 'text-green-400 bg-green-500/10',
-    peer: 'text-orange-400 bg-orange-500/10',
-  };
-
-  return (
-    <div className="bg-gray-800/50 rounded-lg p-2.5 flex items-center gap-2">
-      <div className={`w-2 h-2 rounded-full ${statusDot(status)}`} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-gray-300">{label}</span>
-          <span className={`text-[9px] px-1 py-0.5 rounded ${roleColors[role] || 'text-gray-400 bg-gray-500/10'}`}>
-            {role}
-          </span>
-        </div>
-        <p className="text-[10px] font-mono text-gray-500 mt-0.5">{truncated}</p>
-      </div>
-      <button
-        onClick={onCopy}
-        className="p-1 rounded hover:bg-gray-700/50 transition-colors"
-        title="Copy agent address"
-      >
-        {isCopied ? (
-          <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-        ) : (
-          <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-          </svg>
-        )}
-      </button>
     </div>
   );
 }
