@@ -91,11 +91,18 @@ export async function POST(req: NextRequest) {
 
     if (!pyResponse.ok) {
       const text = await pyResponse.text().catch(() => '');
+      console.error(
+        `[cross-match] orchestrator returned ${pyResponse.status}:`,
+        text,
+      );
       return NextResponse.json(
         {
           error: 'orchestrator_error',
           status: pyResponse.status,
-          detail: text,
+          detail:
+            process.env.NODE_ENV !== 'production'
+              ? text.slice(0, 500)
+              : 'The matching service returned an error. Please try again.',
         },
         { status: 502 },
       );
