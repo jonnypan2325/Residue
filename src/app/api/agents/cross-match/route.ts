@@ -94,20 +94,22 @@ export async function POST(req: NextRequest) {
     });
 
     if (!pyResponse.ok) {
-      // Log the full orchestrator response server-side for debugging, but never
-      // forward raw stack traces or internal diagnostics to the client.
+      // Log only a bounded preview of the orchestrator response server-side for
+      // debugging, but never forward raw stack traces or internal diagnostics
+      // to the client.
       const text = await pyResponse.text().catch(() => '');
-      console.error(
-        `[cross-match] orchestrator returned ${pyResponse.status}:`,
-        text,
-      );
+      const textPreview = text.slice(0, 500);
+      console.error('[cross-match] orchestrator returned error', {
+        status: pyResponse.status,
+        bodyPreview: textPreview,
+      });
       return NextResponse.json(
         {
           error: 'orchestrator_error',
           status: pyResponse.status,
           detail:
             process.env.NODE_ENV !== 'production'
-              ? text.slice(0, 500)
+              ? textPreview
               : 'The matching service returned an error. Please try again.',
         },
         { status: 502 },
