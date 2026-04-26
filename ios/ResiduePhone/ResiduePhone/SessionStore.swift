@@ -67,9 +67,12 @@ final class SessionStore: ObservableObject {
         if let t = token {
             do {
                 user = try await api.me(token: t)
-                if sessionStart == nil {
-                    sessionStart = Date()
-                }
+                // Intentionally do NOT default `sessionStart` here. It
+                // is reset to `Date()` on the rising edge of a desktop
+                // session (see `bindToActiveSession`). Defaulting it on
+                // bootstrap would make the SessionView show a stale
+                // "Started" time that has nothing to do with the
+                // currently running study session.
                 startSessionTracking(sessionId: pairedSessionId)
                 await startActiveSessionPolling(token: t)
             } catch {
@@ -99,6 +102,39 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Sign in via the 6-digit pairing code displayed on the desktop.
+    /// In one round-trip this both mints the phone's auth token and
+    /// binds it to the in-progress desktop study session — the user
+    /// never has to type their account password on the phone.
+    func loginWithCode(code: String) async {
+        do {
+            let resp = try await api.loginWithCode(code: code, deviceId: deviceId)
+            token = resp.token
+            user = resp.user
+            UserDefaults.standard.set(resp.token, forKey: DefaultsKey.token)
+            // Treat this exactly like a rising-edge auto-bind: the
+            // pairing code references an active desktop session, so
+            // counters reset and tracking starts immediately.
+            pairedSessionId = resp.sessionId
+            sessionStart = Date()
+            openCount = 0
+            totalDistractionMs = 0
+            activeSince = nil
+            reportSummary = nil
+            statusMessage = "Paired with desktop session"
+            persistSessionState()
+            stopSessionTracking()
+            startSessionTracking(sessionId: resp.sessionId)
+            Task { [weak self, token = resp.token] in
+                await self?.startActiveSessionPolling(token: token)
+            }
+            log.info("code-login bound to desktop session \(resp.sessionId, privacy: .public)")
+        } catch {
+            log.error("code-login failed: \(error.localizedDescription, privacy: .public)")
+            statusMessage = error.localizedDescription
+        }
+    }
+
     func logout() {
         stopSessionTracking()
         Task { [activeSessionPoller] in await activeSessionPoller.stop() }
@@ -118,9 +154,11 @@ final class SessionStore: ObservableObject {
         token = resp.token
         user = resp.user
         UserDefaults.standard.set(resp.token, forKey: DefaultsKey.token)
-        if sessionStart == nil {
-            sessionStart = Date()
-        }
+        // `sessionStart` is set by the active-session poller on the
+        // rising edge (see `bindToActiveSession`) so the displayed
+        // "Started" time always reflects the current desktop study
+        // session — never a stale sign-in timestamp from a previous
+        // launch.
         startSessionTracking(sessionId: pairedSessionId)
         persistSessionState()
         statusMessage = nil
@@ -215,6 +253,17 @@ final class SessionStore: ObservableObject {
             pairedSessionId = sessionId
         }
         stopSessionTracking()
+        // Close out any open distraction segment so the live "Time
+        // on phone" counter stops ticking the instant the desktop
+        // session ends. Without this, if the phone happens to be in
+        // the middle of a distraction period when the desktop hits
+        // "End Session", the SessionView keeps incrementing
+        // `currentTotalDistractionMs(now:)` forever.
+        if let opened = activeSince {
+            totalDistractionMs += Date().timeIntervalSince(opened) * 1000
+            activeSince = nil
+            persistSessionState()
+        }
         // Avoid double-firing if the user already tapped the manual
         // "Generate distraction report" button while the session was
         // running.
@@ -338,7 +387,9 @@ final class SessionStore: ObservableObject {
                         modelKey: result.modelKey,
                         inferenceMs: result.inferenceMs,
                         promptTokens: result.promptTokens,
-                        completionTokens: result.completionTokens
+                        completionTokens: result.completionTokens,
+                        unlockCount: openCount,
+                        totalDistractionMs: totalDistractionMs
                     ),
                     token: token
                 )

@@ -35,6 +35,8 @@ export async function POST(req: NextRequest) {
     inferenceMs?: number;
     promptTokens?: number;
     completionTokens?: number;
+    unlockCount?: number;
+    totalDistractionMs?: number;
   };
 
   const { sessionId, summary } = body;
@@ -73,7 +75,11 @@ export async function POST(req: NextRequest) {
   // pipeline (CorrelationAgent rebuild + best-effort Orchestrator
   // refresh). The function never throws, so the desktop UI keeps
   // rendering even if the agent stack is offline.
-  void feedReportIntoAgents(payload.uid, sessionId, stored);
+  void feedReportIntoAgents(payload.uid, sessionId, stored, {
+    unlockCount: typeof body.unlockCount === 'number' ? body.unlockCount : undefined,
+    totalDistractionMs:
+      typeof body.totalDistractionMs === 'number' ? body.totalDistractionMs : undefined,
+  });
 
   return NextResponse.json({ status: 'ok' });
 }

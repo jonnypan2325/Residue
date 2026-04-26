@@ -24,6 +24,18 @@ struct PairClaimResponse: Codable {
     let claimedAt: Double?
 }
 
+/// Mirrors the desktop's `/api/pair/code-login` response. The 6-digit
+/// pairing code is enough to mint a fresh auth token for the desktop
+/// user AND bind the phone to the in-progress study session in one
+/// call — the user never has to type their account password on the
+/// phone.
+struct CodeLoginResponse: Codable {
+    let token: String
+    let user: AuthUser
+    let sessionId: String
+    let claimedAt: Double?
+}
+
 /// Mirrors the desktop's `/api/phone/active-session` response. The phone
 /// polls this endpoint every few seconds; transitions in
 /// `currentlyStudying` drive auto-bind (false→true) and auto-report
@@ -70,7 +82,11 @@ struct PhoneEventPayload: Codable {
 }
 
 /// Mirrors the desktop's `/api/phone/report` body: the natural-language
-/// distraction summary produced on-device by the Melange LLM.
+/// distraction summary produced on-device by the Melange LLM. The
+/// `unlockCount` and `totalDistractionMs` fields are forwarded to the
+/// Fetch.ai agent bridge (`feedReportIntoAgents`) so the
+/// CorrelationAgent rebuild that fires after this POST is grounded in
+/// real measured distractions, not just the LLM's free-text summary.
 struct ReportPayload: Codable {
     let sessionId: String
     let summary: String
@@ -79,6 +95,8 @@ struct ReportPayload: Codable {
     let inferenceMs: Double
     let promptTokens: Int
     let completionTokens: Int
+    let unlockCount: Int
+    let totalDistractionMs: Double
 }
 
 enum APIError: LocalizedError {
@@ -153,6 +171,17 @@ final class ResidueAPI {
             path: "/api/pair/auto",
             body: ["sessionId": sessionId, "phoneDeviceId": deviceId],
             token: token
+        )
+    }
+
+    /// Sign-in-by-pairing-code. The 6-digit code minted by the desktop
+    /// (via `/api/pair/start`) is enough to authenticate the phone AND
+    /// bind it to the in-progress study session — no email/password
+    /// needed.
+    func loginWithCode(code: String, deviceId: String) async throws -> CodeLoginResponse {
+        try await postJSON(
+            path: "/api/pair/code-login",
+            body: ["code": code, "phoneDeviceId": deviceId]
         )
     }
 

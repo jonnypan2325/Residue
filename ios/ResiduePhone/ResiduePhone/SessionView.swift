@@ -17,12 +17,12 @@ struct SessionView: View {
             }
 
             Section("Distractions this session") {
-                LabeledContent("Phone unlocks") { Text("\(session.openCount)") }
+                LabeledContent("Phone pickups") { Text("\(session.openCount)") }
                 LabeledContent("Time on phone") {
                     Text(formatDuration(currentTotalDistractionMs(now: now)))
                 }
                 if let last = session.lastOpenedAt {
-                    LabeledContent("Last unlock") { Text(last, style: .relative) }
+                    LabeledContent("Last pickup") { Text(last, style: .relative) }
                 }
             }
 
