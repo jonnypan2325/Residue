@@ -38,6 +38,10 @@ if env_file.exists():
     from dotenv import load_dotenv
     load_dotenv(env_file)
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+from mongo_loader import get_mongo_context
+
 from openai import OpenAI
 from uagents import Context, Protocol, Agent, Model
 from uagents_core.contrib.protocols.chat import (
@@ -427,7 +431,11 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
             if BUDDY_ADDRESSES:
                 buddy_info = f"\n\nYou have {len(BUDDY_ADDRESSES)} Study Buddy agents connected: {', '.join(a[:15] + '...' for a in BUDDY_ADDRESSES)}"
 
-            messages = [{"role": "system", "content": SYSTEM_PROMPT + buddy_info}] + gateway_chat_history[sender]
+            # Inject real MongoDB data into the system prompt
+            mongo_ctx = get_mongo_context()
+            enriched_prompt = SYSTEM_PROMPT + buddy_info + "\n\nReal-time platform data from MongoDB:\n" + mongo_ctx
+
+            messages = [{"role": "system", "content": enriched_prompt}] + gateway_chat_history[sender]
 
             r = client.chat.completions.create(
                 model="asi1-mini",

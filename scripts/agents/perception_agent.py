@@ -28,6 +28,10 @@ from uagents_core.contrib.protocols.chat import (
 # Load .env from project root so ASI1_API_KEY is available
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+from mongo_loader import get_mongo_context
+
 
 # ── Data Models ──────────────────────────────────────────────────────────────
 
@@ -303,9 +307,13 @@ Keep responses concise but informative."""
         # Keep last 10 messages for context
         chat_history[sender] = chat_history[sender][-10:]
 
-        messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}] + chat_history[sender]
+        # Inject real MongoDB data into the system prompt
+        mongo_ctx = get_mongo_context()
+        enriched_prompt = CHAT_SYSTEM_PROMPT + "\n\nReal-time platform data from MongoDB:\n" + mongo_ctx
 
-        response_text = call_asi1_mini(CHAT_SYSTEM_PROMPT, text)
+        messages = [{"role": "system", "content": enriched_prompt}] + chat_history[sender]
+
+        response_text = call_asi1_mini(enriched_prompt, text)
         if not response_text or response_text.startswith("ASI1-Mini"):
             # Try with full history via direct API call
             api_key = os.environ.get("ASI1_API_KEY", "")
