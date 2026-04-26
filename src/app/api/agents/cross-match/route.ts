@@ -118,11 +118,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
+    const isProd = process.env.NODE_ENV === 'production';
     return NextResponse.json(
       {
         error: 'orchestrator_unreachable',
-        detail: message,
-        hint: `Make sure the Python orchestrator is running on ${ORCHESTRATOR_URL}. Run: python scripts/agents/orchestrator_agent.py`,
+        detail: isProd
+          ? 'The matching service is not reachable. Please try again later.'
+          : message,
+        hint: isProd
+          ? undefined
+          : `Make sure the Python orchestrator is running on ${ORCHESTRATOR_URL}. Run: python scripts/agents/orchestrator_agent.py`,
       },
       { status: 503 },
     );
