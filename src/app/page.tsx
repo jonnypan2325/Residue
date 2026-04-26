@@ -506,9 +506,9 @@ function Dashboard({ auth }: { auth: AuthSession }) {
             bedUrl: null,
             gapAnalysis: {
               currentDb: latestAcousticProfile?.overallDb ?? 0,
-              targetDb: data.intervention.volume_target ?? 0,
-              delta: 0,
-              bands: [],
+              targetDb: data.intervention.gap_analysis?.target_db ?? data.intervention.volume_target ?? 0,
+              delta: data.intervention.gap_analysis?.delta ?? 0,
+              bands: data.intervention.gap_analysis?.bands ?? [],
             },
             timestamp: Date.now(),
           };
