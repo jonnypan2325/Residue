@@ -848,7 +848,13 @@ Keep responses concise but informative."""
         chat_history[sender].append({"role": "user", "content": text})
         chat_history[sender] = chat_history[sender][-10:]
 
-        messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}] + chat_history[sender]
+        # Inject real MongoDB data into the system prompt
+        mongo_ctx = get_mongo_context()
+        enriched_prompt = CHAT_SYSTEM_PROMPT
+        if mongo_ctx:
+            enriched_prompt += "\n\nReal-time platform data from MongoDB:\n" + mongo_ctx
+
+        messages = [{"role": "system", "content": enriched_prompt}] + chat_history[sender]
         response_text = ""
         api_key = os.environ.get("ASI1_API_KEY", "")
         if api_key:

@@ -29,20 +29,35 @@ _client: Optional[Any] = None
 DB_NAME = os.environ.get("MONGODB_DB", "residue")
 
 
+_connection_logged = False
+
+
 def _get_client():
-    global _client
+    global _client, _connection_logged
     if _client is not None:
         return _client
     if MongoClient is None:
+        if not _connection_logged:
+            print("[mongo_loader] pymongo not installed. Install with: pip install pymongo[srv]")
+            _connection_logged = True
         return None
     uri = os.environ.get("MONGODB_URI", "")
     if not uri:
+        if not _connection_logged:
+            print("[mongo_loader] MONGODB_URI not set in .env — agents will respond without personalized data")
+            _connection_logged = True
         return None
     try:
         _client = MongoClient(uri, serverSelectionTimeoutMS=5000)
         _client.admin.command("ping")
+        if not _connection_logged:
+            print("[mongo_loader] Connected to MongoDB Atlas successfully")
+            _connection_logged = True
         return _client
-    except Exception:
+    except Exception as e:
+        if not _connection_logged:
+            print(f"[mongo_loader] MongoDB connection failed: {e}")
+            _connection_logged = True
         _client = None
         return None
 
@@ -126,7 +141,7 @@ def get_all_users_summary() -> str:
     """Return a concise summary of all users and their data for agent context."""
     db = _db()
     if db is None:
-        return "MongoDB not connected."
+        return ""
     try:
         users = list(db["users"].find({}, {"email": 1, "_id": 1, "agentId": 1}))
         profiles = list(db["profiles"].find({}))
@@ -217,4 +232,4 @@ def get_mongo_context(user_id: Optional[str] = None) -> str:
                 f"bands: {[b.get('magnitude', 0) for b in af.get('frequencyBands', [])]}."
             )
 
-    return "\n\n".join(parts) if parts else "No data available in MongoDB yet."
+    return "\n\n".join(parts) if parts else ""
