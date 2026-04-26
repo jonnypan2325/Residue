@@ -12,6 +12,7 @@ import ModeSelector from '@/components/ModeSelector';
 import AuthControl from '@/components/AuthControl';
 import PhonePairingPanel from '@/components/PhonePairingPanel';
 import AgentPanel from '@/components/AgentPanel';
+import ResidueLogo from '@/components/ResidueLogo';
 import { useAudioCapture } from '@/hooks/useAudioCapture';
 import { useScreenCapture } from '@/hooks/useScreenCapture';
 import { useAudioOverlay } from '@/hooks/useAudioOverlay';
@@ -23,6 +24,9 @@ import {
   getRecommendation,
 } from '@/lib/correlationEngine';
 import type { AcousticProfile, AcousticStateCorrelation } from '@/types';
+
+const siteTitleClass =
+  'font-[family-name:var(--font-economica)] text-4xl font-bold tracking-wide text-[#8c52ff]';
 
 export default function Home() {
   const auth = useAuth();
@@ -44,7 +48,7 @@ function GateLoading() {
   return (
     <main className="min-h-screen bg-[#0a0a1a] text-white flex items-center justify-center px-4">
       <div className="text-center">
-        <div className="mx-auto mb-4 w-10 h-10 rounded-xl bg-linear-to-br from-cyan-500 to-purple-600 animate-pulse" />
+        <ResidueLogo className="mx-auto mb-4 w-10 h-10 rounded-xl animate-pulse" priority />
         <p className="text-sm text-gray-400">Checking your session...</p>
       </div>
     </main>
@@ -58,16 +62,10 @@ function AuthGateHome() {
       <header className="relative z-10 border-b border-gray-800/50 bg-gray-900/30 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-linear-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-              </svg>
-            </div>
+            <ResidueLogo className="w-14 h-14 rounded-lg" priority />
             <div>
-              <h1 className="text-xl font-bold bg-linear-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
-                Residue
-              </h1>
-              <p className="text-xs text-gray-500">Personalized Acoustic Intelligence</p>
+              <h1 className={siteTitleClass}>RESIDUE</h1>
+              <p className="text-sm text-gray-500">Personalized Acoustic Intelligence</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -310,16 +308,10 @@ function Dashboard({ auth }: { auth: AuthSession }) {
       <header className="border-b border-gray-800/50 bg-gray-900/30 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-linear-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-              </svg>
-            </div>
+            <ResidueLogo className="w-14 h-14 rounded-lg" priority />
             <div>
-              <h1 className="text-xl font-bold bg-linear-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
-                Residue
-              </h1>
-              <p className="text-xs text-gray-500">Personalized Acoustic Intelligence</p>
+              <h1 className={siteTitleClass}>RESIDUE</h1>
+              {/* <p className="text-sm text-gray-500">Personalized Acoustic Intelligence</p> */}
             </div>
           </div>
 
