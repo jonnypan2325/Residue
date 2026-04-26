@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import FrequencyVisualizer from '@/components/FrequencyVisualizer';
 import DbMeter from '@/components/DbMeter';
 import ProductivityTracker from '@/components/ProductivityTracker';
@@ -22,17 +23,132 @@ import {
   analyzeCorrelations,
   getRecommendation,
 } from '@/lib/correlationEngine';
-import type { AcousticStateCorrelation, UserProfile } from '@/types';
+import type { AcousticProfile, AcousticStateCorrelation } from '@/types';
 
 export default function Home() {
+  const auth = useAuth();
+
+  if (!auth.ready) {
+    return <GateLoading />;
+  }
+
+  if (!auth.user) {
+    return <AuthGateHome />;
+  }
+
+  return <Dashboard auth={auth} />;
+}
+
+type AuthSession = ReturnType<typeof useAuth>;
+
+function GateLoading() {
+  return (
+    <main className="min-h-screen bg-[#0a0a1a] text-white flex items-center justify-center px-4">
+      <div className="text-center">
+        <div className="mx-auto mb-4 w-10 h-10 rounded-xl bg-linear-to-br from-cyan-500 to-purple-600 animate-pulse" />
+        <p className="text-sm text-gray-400">Checking your session...</p>
+      </div>
+    </main>
+  );
+}
+
+function AuthGateHome() {
+  return (
+    <main className="min-h-screen bg-[#0a0a1a] text-white overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(6,182,212,0.2),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(147,51,234,0.18),transparent_35%)]" />
+      <header className="relative z-10 border-b border-gray-800/50 bg-gray-900/30 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-linear-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-xl font-bold bg-linear-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
+                Residue
+              </h1>
+              <p className="text-xs text-gray-500">Personalized Acoustic Intelligence</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/login"
+              className="text-xs px-3 py-1.5 rounded-lg border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
+            >
+              Sign in
+            </Link>
+            <Link
+              href="/signup"
+              className="text-xs px-3 py-1.5 rounded-lg bg-linear-to-r from-cyan-500 to-purple-600 text-white hover:opacity-90"
+            >
+              Create account
+            </Link>
+          </div>
+        </div>
+      </header>
+
+      <section className="relative z-10 min-h-[calc(100vh-73px)] flex items-center">
+        <div className="max-w-7xl mx-auto px-4 py-16 grid lg:grid-cols-[1.05fr_0.95fr] gap-10 items-center">
+          <div>
+            <p className="text-xs uppercase tracking-[0.35em] text-cyan-300/80 mb-5">
+              Private focus workspace
+            </p>
+            <h2 className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-tight">
+              Tune your environment to the way you actually work.
+            </h2>
+            <p className="mt-6 text-lg text-gray-300 max-w-2xl">
+              Residue learns your acoustic profile, tracks focus signals locally,
+              and adapts your workspace with personalized audio overlays.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Link
+                href="/signup"
+                className="px-5 py-3 rounded-xl bg-linear-to-r from-cyan-500 to-purple-600 text-sm font-semibold text-white hover:opacity-90"
+              >
+                Create account
+              </Link>
+              <Link
+                href="/login"
+                className="px-5 py-3 rounded-xl border border-gray-700 text-sm font-semibold text-gray-200 hover:bg-gray-800/70"
+              >
+                Sign in
+              </Link>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-gray-800 bg-gray-900/70 backdrop-blur-md p-6 shadow-2xl shadow-cyan-950/20">
+            <div className="grid gap-4">
+              {[
+                ['Acoustic profile', 'Learns the sound ranges where you focus best.'],
+                ['Local analysis', 'Processes audio and screen changes on your device.'],
+                ['Companion mode', 'Pairs phone distraction signals to your session.'],
+              ].map(([title, body]) => (
+                <div key={title} className="rounded-2xl border border-gray-800 bg-gray-950/50 p-4">
+                  <p className="text-sm font-semibold text-cyan-300">{title}</p>
+                  <p className="mt-2 text-sm text-gray-400">{body}</p>
+                </div>
+              ))}
+            </div>
+            <p className="mt-5 text-xs text-gray-500">
+              Sign in is required before accessing the dashboard.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function Dashboard({ auth }: { auth: AuthSession }) {
   const [currentMode, setCurrentMode] = useState<'focus' | 'calm' | 'creative' | 'social'>('focus');
   const [correlations, setCorrelations] = useState<AcousticStateCorrelation[]>([]);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionDuration, setSessionDuration] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const acousticProfileRef = useRef<AcousticProfile | null>(null);
+  const currentModeRef = useRef(currentMode);
 
-  const auth = useAuth();
   const phone = usePhoneCompanion(auth.token, sessionActive ? sessionId : null);
 
   const {
@@ -58,9 +174,37 @@ export default function Home() {
     startOverlay,
     stopOverlay,
     setVolume,
-    setSoundType,
     generateAiBed,
   } = useAudioOverlay();
+
+  useEffect(() => {
+    acousticProfileRef.current = acousticProfile;
+  }, [acousticProfile]);
+
+  useEffect(() => {
+    currentModeRef.current = currentMode;
+  }, [currentMode]);
+
+  useEffect(() => {
+    const userId = auth.user?.uid;
+    if (!userId) return;
+
+    let cancelled = false;
+    fetch(`/api/correlations?userId=${encodeURIComponent(userId)}&limit=200`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((stored: AcousticStateCorrelation[]) => {
+        if (!cancelled && Array.isArray(stored)) {
+          setCorrelations(stored);
+        }
+      })
+      .catch(() => {
+        // MongoDB may be unavailable; live in-memory correlations still work.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user?.uid]);
 
   const handleStartSession = useCallback(async () => {
     await startListening();
@@ -86,32 +230,39 @@ export default function Home() {
   }, [sessionActive]);
 
   useEffect(() => {
-    if (acousticProfile && currentSnapshot) {
-      const corr = createCorrelation(acousticProfile, currentSnapshot, 'user-1');
-      setCorrelations((prev) => {
-        const next = [...prev, corr].slice(-200);
-        const newProfile = analyzeCorrelations(next);
-        if (newProfile) setProfile(newProfile);
-        return next;
+    const latestAcousticProfile = acousticProfileRef.current;
+    const userId = auth.user?.uid;
+    if (latestAcousticProfile && currentSnapshot && userId) {
+      const mode = currentModeRef.current;
+      const corr = createCorrelation(latestAcousticProfile, currentSnapshot, userId);
+      queueMicrotask(() => {
+        setCorrelations((prev) => [...prev, corr].slice(-200));
       });
+
+      fetch('/api/correlations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(corr),
+      }).catch(() => { /* MongoDB may be unavailable */ });
 
       // Persist snapshot to MongoDB (fire-and-forget)
       fetch('/api/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: 'user-1',
-          mode: currentMode,
+          userId,
+          sessionId,
+          mode,
           acoustic_features: {
-            overallDb: acousticProfile.overallDb,
-            frequencyBands: acousticProfile.frequencyBands,
-            dominantFrequency: acousticProfile.dominantFrequency,
-            spectralCentroid: acousticProfile.spectralCentroid,
+            overallDb: latestAcousticProfile.overallDb,
+            frequencyBands: latestAcousticProfile.frequencyBands,
+            dominantFrequency: latestAcousticProfile.dominantFrequency,
+            spectralCentroid: latestAcousticProfile.spectralCentroid,
           },
           behavioral_features: null,
           productivity_score: currentSnapshot.productivityScore,
           state: currentSnapshot.productivityScore > 70 ? 'focused' : currentSnapshot.productivityScore > 40 ? 'normal' : 'distracted',
-          goal: currentMode,
+          goal: mode,
         }),
       }).catch(() => { /* MongoDB may be unavailable */ });
 
@@ -159,7 +310,14 @@ export default function Home() {
         }
       }).catch(() => { /* Orchestrator may be unavailable */ });
     }
-  }, [currentSnapshot]);
+  }, [auth.user?.uid, currentSnapshot, sessionId]);
+
+  const profile = useMemo(() => analyzeCorrelations(correlations), [correlations]);
+
+  const studyBuddyEqVector = useMemo(() => {
+    const magnitudes = profile?.optimalFrequencyProfile.map((band) => band.magnitude) ?? [];
+    return Array.from({ length: 7 }, (_, index) => magnitudes[index] ?? 0);
+  }, [profile]);
 
   const recommendation =
     profile && acousticProfile ? getRecommendation(profile, acousticProfile) : null;
@@ -177,13 +335,13 @@ export default function Home() {
       <header className="border-b border-gray-800/50 bg-gray-900/30 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-linear-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
               <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
               </svg>
             </div>
             <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
+              <h1 className="text-xl font-bold bg-linear-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
                 Residue
               </h1>
               <p className="text-xs text-gray-500">Personalized Acoustic Intelligence</p>
@@ -194,9 +352,6 @@ export default function Home() {
             <AuthControl
               ready={auth.ready}
               user={auth.user}
-              error={auth.error}
-              onLogin={auth.login}
-              onRegister={auth.register}
               onLogout={auth.logout}
             />
             {sessionActive && (
@@ -212,7 +367,7 @@ export default function Home() {
               className={`px-5 py-2 rounded-lg font-medium text-sm transition-all ${
                 sessionActive
                   ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30'
-                  : 'bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:opacity-90'
+                  : 'bg-linear-to-r from-cyan-500 to-purple-600 text-white hover:opacity-90'
               }`}
             >
               {sessionActive ? 'End Session' : 'Start Session'}
@@ -303,17 +458,20 @@ export default function Home() {
               }
               onStop={stopOverlay}
               onSetVolume={setVolume}
-              onSetSoundType={setSoundType}
-              onGenerateAiBed={generateAiBed}
+              onGenerateAiBed={(mode) => generateAiBed(mode, undefined, auth.user?.uid)}
               currentMode={currentMode}
               recommendation={recommendation}
             />
 
             {/* Agent Network */}
-            <AgentPanel />
+            <AgentPanel token={auth.token} userId={auth.user?.uid ?? null} />
 
             {/* Study Buddy Finder */}
-            <StudyBuddyFinder userOptimalRange={profile?.optimalDbRange} />
+            <StudyBuddyFinder
+              userId={auth.user?.uid}
+              userOptimalRange={profile?.optimalDbRange}
+              eqVector={studyBuddyEqVector}
+            />
 
             {/* Agent Debug Panel */}
             <AgentDebugPanel />

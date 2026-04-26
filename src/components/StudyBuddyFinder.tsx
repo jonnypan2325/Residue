@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { StudyBuddy } from '@/types';
 
 const MOCK_BUDDIES: StudyBuddy[] = [
@@ -47,16 +47,52 @@ const MOCK_BUDDIES: StudyBuddy[] = [
 ];
 
 interface Props {
+  userId?: string;
   userOptimalRange?: [number, number];
+  eqVector?: number[];
 }
 
-export default function StudyBuddyFinder({ userOptimalRange }: Props) {
+export default function StudyBuddyFinder({ userId, userOptimalRange, eqVector }: Props) {
   const [buddies, setBuddies] = useState<StudyBuddy[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  const findBuddies = () => {
+  const findBuddies = useCallback(async () => {
     setIsSearching(true);
-    setTimeout(() => {
+    try {
+      if (userId && eqVector?.length === 7) {
+        const res = await fetch('/api/agents/matching', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            eqVector,
+            activeOnly: false,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.matches) && data.matches.length > 0) {
+            setBuddies(data.matches.map((match: {
+              userId: string;
+              name: string;
+              optimalDbRange: [number, number];
+              similarity: number;
+              currentlyStudying: boolean;
+              location?: string;
+            }) => ({
+              id: match.userId,
+              name: match.name,
+              optimalDbRange: match.optimalDbRange,
+              similarity: match.similarity,
+              currentlyStudying: match.currentlyStudying,
+              location: match.location,
+            })));
+            setIsSearching(false);
+            return;
+          }
+        }
+      }
+
       let sorted = [...MOCK_BUDDIES];
       if (userOptimalRange) {
         sorted = sorted.map((b) => {
@@ -74,13 +110,19 @@ export default function StudyBuddyFinder({ userOptimalRange }: Props) {
       }
       sorted.sort((a, b) => b.similarity - a.similarity);
       setBuddies(sorted);
+    } catch {
+      setBuddies(MOCK_BUDDIES);
+    } finally {
       setIsSearching(false);
-    }, 1500);
-  };
+    }
+  }, [eqVector, userId, userOptimalRange]);
 
   useEffect(() => {
-    findBuddies();
-  }, [userOptimalRange]);
+    const timer = setTimeout(() => {
+      findBuddies();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [findBuddies]);
 
   return (
     <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-6 space-y-4">
@@ -111,7 +153,7 @@ export default function StudyBuddyFinder({ userOptimalRange }: Props) {
               className="flex items-center gap-3 p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800/80 transition-colors"
             >
               <div className="relative">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center text-white font-bold text-sm">
+                <div className="w-10 h-10 rounded-full bg-linear-to-br from-purple-500 to-cyan-500 flex items-center justify-center text-white font-bold text-sm">
                   {buddy.name.charAt(0)}
                 </div>
                 {buddy.currentlyStudying && (
