@@ -835,7 +835,14 @@ Keep responses concise but informative."""
                 return
             elif action == "profile_query":
                 user_id = payload.get("user_id", "")
-                profile = profiles.get(user_id)
+                # MongoDB is the source of truth; fall back to in-memory cache.
+                # Matches the typed-message handler `handle_profile_query` so the
+                # chat-protocol path doesn't return has_profile=false for users
+                # whose profile only exists in Mongo (i.e. hasn't been touched
+                # in this agent's current process).
+                profile = fetch_profile(user_id)
+                if profile is None:
+                    profile = profiles.get(user_id)
                 response_text = json.dumps({"action": "profile_result", "user_id": user_id, "has_profile": profile is not None, "profile": profile if profile else {}})
                 await ctx.send(sender, ChatMessage(timestamp=datetime.utcnow(), msg_id=uuid4(), content=[TextContent(type="text", text=response_text), EndSessionContent(type="end-session")]))
                 return
