@@ -7,7 +7,6 @@ import ProductivityTracker from '@/components/ProductivityTracker';
 import AudioOverlayControl from '@/components/AudioOverlayControl';
 import CorrelationDashboard from '@/components/CorrelationDashboard';
 import StudyBuddyFinder from '@/components/StudyBuddyFinder';
-import AgentMatchPanel from '@/components/AgentMatchPanel';
 import ModeSelector, { type Mode } from '@/components/ModeSelector';
 import AuthControl from '@/components/AuthControl';
 import PhonePairingPanel from '@/components/PhonePairingPanel';
@@ -772,12 +771,12 @@ function Dashboard({ auth }: { auth: AuthSession }) {
         ) : (
           <section className="space-y-6">
             <div className={`rounded-2xl border bg-gray-900/80 p-6 shadow-2xl backdrop-blur-sm transition-colors duration-500 ${modeTheme.panel}`}>
-              <p className="text-xs uppercase tracking-[0.3em] text-purple-300/80">Buddy tools</p>
+              <p className="text-xs uppercase tracking-[0.3em] text-purple-300/80">Study buddies</p>
               <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                 <div>
-                  <h2 className="text-3xl font-bold text-white">Agentic support, without crowding your session.</h2>
-                  <p className="mt-2 max-w-2xl text-sm text-gray-400">
-                    Match with compatible study buddies, inspect your agent network, and use cross-agent recommendations here.
+                  <h2 className="text-3xl font-bold text-white">Find someone who studies like you.</h2>
+                  <p className="mt-2 text-sm text-gray-400">
+                    Start with matches. If you want help, copy an Agent ID and open ASI:One.
                   </p>
                 </div>
                 {sessionActive && (
@@ -788,40 +787,19 @@ function Dashboard({ auth }: { auth: AuthSession }) {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <div className="space-y-6">
-                {/* Agent Network */}
-                <AgentPanel token={auth.token} userId={auth.user?.uid ?? null} />
-
-                {/* Cross-Agent Matching (CorrelationAgent) */}
-                <AgentMatchPanel
-                  token={auth.token}
-                  userId={auth.user?.uid ?? null}
-                />
-              </div>
-
-              <div className="space-y-6">
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+              <div>
                 {/* Study Buddy Finder */}
                 <StudyBuddyFinder
                   token={auth.token}
                   userId={auth.user?.uid}
-                  userOptimalRange={profile?.optimalDbRange}
                   eqVector={studyBuddyEqVector}
                 />
+              </div>
 
-                <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-4">
-                  <p className="text-xs text-gray-400 mb-2">Buddy features powered by</p>
-                  <div className="flex flex-wrap gap-2">
-                    {['Fetch.ai', 'MongoDB Atlas', 'Cognition'].map((tech) => (
-                      <span
-                        key={tech}
-                        className="px-2 py-1 bg-gray-800/50 text-gray-300 text-xs rounded-md border border-gray-700"
-                      >
-                        {tech}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+              <div>
+                {/* AI Helper Chat */}
+                <AgentPanel token={auth.token} userId={auth.user?.uid ?? null} />
               </div>
             </div>
           </section>
