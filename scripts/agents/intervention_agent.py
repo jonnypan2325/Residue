@@ -302,7 +302,9 @@ Keep responses concise but informative."""
 
         # Inject real MongoDB data into the system prompt
         mongo_ctx = get_mongo_context()
-        enriched_prompt = CHAT_SYSTEM_PROMPT + "\n\nReal-time platform data from MongoDB:\n" + mongo_ctx
+        enriched_prompt = CHAT_SYSTEM_PROMPT
+        if mongo_ctx:
+            enriched_prompt += "\n\nReal-time platform data from MongoDB:\n" + mongo_ctx
 
         messages = [{"role": "system", "content": enriched_prompt}] + chat_history[sender]
         response_text = ""
