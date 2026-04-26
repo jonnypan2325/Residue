@@ -11,9 +11,32 @@ struct SessionView: View {
 
     var body: some View {
         Form {
+            // Banner: desktop just ended the session and the on-device
+            // Melange report is generating. Pinned at the top so the
+            // user sees it before scrolling. Hides automatically as
+            // soon as `reportSummary` becomes non-nil OR `reportError`
+            // is set.
+            if session.sessionEndedAt != nil, session.reportSummary == nil, session.reportError == nil {
+                Section {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Session ended on desktop")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Generating distraction report on-device…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
             Section(session.pairedSessionId == nil ? "Local session" : "Paired session") {
                 LabeledContent("Session", value: session.pairedSessionId ?? "Local only")
                 LabeledContent("Started", value: session.sessionStart.map(formatted) ?? "—")
+                if let endedAt = session.sessionEndedAt {
+                    LabeledContent("Ended", value: formatted(endedAt))
+                }
             }
 
             Section("Distractions this session") {
@@ -27,7 +50,14 @@ struct SessionView: View {
             }
 
             Section("On-device distraction report") {
-                if let summary = session.reportSummary {
+                if session.reportInProgress {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Running Zetic Melange (Steve/Qwen3.5-2B) on-device…")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let summary = session.reportSummary {
                     Text(summary)
                         .font(.callout)
                     Text(
@@ -36,6 +66,10 @@ struct SessionView: View {
                     )
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                } else if let err = session.reportError {
+                    Text("Report failed: \(err)")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
                 } else {
                     Text(
                         "Tap below to run the on-device LLM and generate a "
@@ -52,7 +86,7 @@ struct SessionView: View {
                     HStack {
                         Spacer()
                         if session.reportInProgress { ProgressView() } else {
-                            Text("Generate distraction report")
+                            Text(session.reportError != nil ? "Retry distraction report" : "Generate distraction report")
                         }
                         Spacer()
                     }
