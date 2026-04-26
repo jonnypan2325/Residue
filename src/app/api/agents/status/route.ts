@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 
+import { AGENT_POOL } from '@/lib/agents/pool';
+
 interface AgentInfo {
   address: string;
   port: number;
@@ -16,7 +18,6 @@ interface AgentMap {
   perception: AgentInfo;
   correlation: AgentInfo;
   intervention: AgentInfo;
-  residue: AgentInfo;
 }
 
 /**
@@ -42,37 +43,32 @@ export async function GET() {
     status: 'offline',
   });
 
+  const set0 = AGENT_POOL[0];
   const agents: AgentMap = {
     orchestrator: makeDefault(
-      'agent1qvrm7en80z3ux283e3dg64c3gt3qn08ldx2gyap7fhnj537p64y4zgurlrn',
-      8780,
+      set0.orchestrator.address,
+      set0.orchestrator.port,
       'Orchestrator',
       'orchestrator',
       'https://asi1.ai/chat',
     ),
     perception: makeDefault(
-      'agent1qthdmuw6rslcwu3s36vxns4y2my0d4hpajj4deh68d68mhc0vsmkx3hgd8y',
-      8781,
+      set0.perception.address,
+      set0.perception.port,
       'Perception Agent',
       'perception',
     ),
     correlation: makeDefault(
-      'agent1qty4kcuvfdjs5dpscuv2nm6py9870prehp98yp4nk478rtmqa7pcynxw6l9',
-      8782,
+      set0.correlation.address,
+      set0.correlation.port,
       'Correlation Agent',
       'correlation',
     ),
     intervention: makeDefault(
-      'agent1q237netfmp8txn996ylxay08tlx79knl2f079anjaa8h0ssu49xq674e4lk',
-      8783,
+      set0.intervention.address,
+      set0.intervention.port,
       'Intervention Agent',
       'intervention',
-    ),
-    residue: makeDefault(
-      'agent1qd8w4add8w04sflvkvg537dp8zlryfqsap6vr0u3xd2tkn5xlu047waknlq',
-      8784,
-      'Residue',
-      'residue',
     ),
   };
 
@@ -104,7 +100,7 @@ export async function GET() {
   }
 
   // Probe individual agent ports
-  for (const key of ['perception', 'correlation', 'intervention', 'residue'] as const) {
+  for (const key of ['perception', 'correlation', 'intervention'] as const) {
     const agent = agents[key];
     try {
       const res = await fetch(`http://localhost:${agent.port}/submit`, {

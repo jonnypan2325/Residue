@@ -13,6 +13,18 @@ const FREQUENCY_BANDS: { label: string; range: [number, number] }[] = [
   { label: 'Brilliance', range: [6000, 20000] },
 ];
 
+const MIC_SIGNAL_THRESHOLD = 0.002;
+const MIC_VALIDATION_TIMEOUT_MS = 3000;
+const MIC_VALIDATION_INTERVAL_MS = 120;
+
+type CaptureStartResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function calculateDb(analyser: AnalyserNode, dataArray: Float32Array<ArrayBuffer>): number {
   analyser.getFloatTimeDomainData(dataArray);
   let sumSquares = 0;
@@ -87,11 +99,54 @@ export function useAudioCapture() {
   const [isListening, setIsListening] = useState(false);
   const [currentProfile, setCurrentProfile] = useState<AcousticProfile | null>(null);
   const [rawFrequencyData, setRawFrequencyData] = useState<number[]>([]);
+  /**
+   * Surfaced when `getUserMedia` is unavailable or denied so the UI
+   * can render a banner instead of silently doing nothing. Callers
+   * can also handle this themselves by checking `error` after
+   * `startListening()` returns.
+   */
+  const [error, setError] = useState<string | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animFrameRef = useRef<number>(0);
+
+  const cleanupAudioResources = useCallback(() => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    }
+    if (audioContextRef.current) {
+      void audioContextRef.current.close().catch(() => undefined);
+    }
+    audioContextRef.current = null;
+    analyserRef.current = null;
+    streamRef.current = null;
+    animFrameRef.current = 0;
+  }, []);
+
+  const validateMicSignal = useCallback(async (analyser: AnalyserNode) => {
+    const samples = new Float32Array(analyser.fftSize) as Float32Array<ArrayBuffer>;
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < MIC_VALIDATION_TIMEOUT_MS) {
+      analyser.getFloatTimeDomainData(samples);
+      let sumSquares = 0;
+      for (let i = 0; i < samples.length; i++) {
+        sumSquares += samples[i] * samples[i];
+      }
+      const rms = Math.sqrt(sumSquares / samples.length);
+      if (rms >= MIC_SIGNAL_THRESHOLD) {
+        return true;
+      }
+      await wait(MIC_VALIDATION_INTERVAL_MS);
+    }
+
+    return false;
+  }, []);
 
   const analyze = useCallback(() => {
     const analyser = analyserRef.current;
@@ -125,7 +180,31 @@ export function useAudioCapture() {
     update();
   }, []);
 
-  const startListening = useCallback(async () => {
+  const startListening = useCallback(async (): Promise<CaptureStartResult> => {
+    setError(null);
+    cleanupAudioResources();
+    setIsListening(false);
+    setCurrentProfile(null);
+
+    // navigator.mediaDevices is only defined in a "secure context"
+    // (https:// or http://localhost / 127.0.0.1). Loading the dev
+    // server from a LAN IP like http://10.30.227.114:3000 — which is
+    // what we do when testing the iOS companion against the laptop —
+    // makes mediaDevices undefined, and calling .getUserMedia on it
+    // throws "Cannot read properties of undefined". Catch that case
+    // explicitly and surface a useful message instead of a generic
+    // crash.
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      const isSecure = typeof window !== 'undefined' && window.isSecureContext;
+      const host = typeof window !== 'undefined' ? window.location.hostname : '';
+      const message = isSecure
+        ? 'Microphone access is unavailable in this browser.'
+        : `Microphone access requires a secure context. Open Residue at http://localhost:3000 (or behind HTTPS) instead of http://${host}:3000 — Chrome blocks getUserMedia on insecure LAN origins.`;
+      console.error('[useAudioCapture]', message);
+      setError(message);
+      return { ok: false, message };
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -136,6 +215,9 @@ export function useAudioCapture() {
       });
 
       const ctx = new AudioContext();
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
@@ -146,29 +228,32 @@ export function useAudioCapture() {
       analyserRef.current = analyser;
       streamRef.current = stream;
 
+      const hasSignal = await validateMicSignal(analyser);
+      if (!hasSignal) {
+        const message = 'No microphone signal detected. Choose the active mic, then speak or make a sound before continuing.';
+        console.error('[useAudioCapture]', message);
+        setError(message);
+        cleanupAudioResources();
+        return { ok: false, message };
+      }
+
       setIsListening(true);
       analyze();
+      return { ok: true };
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Microphone access denied';
       console.error('Microphone access denied:', err);
+      setError(message);
+      cleanupAudioResources();
+      return { ok: false, message };
     }
-  }, [analyze]);
+  }, [analyze, cleanupAudioResources, validateMicSignal]);
 
   const stopListening = useCallback(() => {
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-    }
-    audioContextRef.current = null;
-    analyserRef.current = null;
-    streamRef.current = null;
+    cleanupAudioResources();
     setIsListening(false);
     setCurrentProfile(null);
-  }, []);
+  }, [cleanupAudioResources]);
 
   useEffect(() => {
     return () => {
@@ -182,5 +267,6 @@ export function useAudioCapture() {
     rawFrequencyData,
     startListening,
     stopListening,
+    error,
   };
 }
