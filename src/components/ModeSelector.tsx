@@ -68,7 +68,7 @@ export default function ModeSelector({ currentMode, onModeChange }: Props) {
             Choose how Residue tunes the room
           </h2>
           <p className="mt-1 text-sm text-gray-400">
-            Modes change the workspace look and retune synthesized overlays.
+            Modes change the workspace look and EQ the curated sample beds.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-gray-300">
