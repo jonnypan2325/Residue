@@ -304,6 +304,12 @@ final class SessionStore: ObservableObject {
             activeSince = nil
             persistSessionState()
         }
+        // Clear `lastOpenedAt` so the "Last unlock" row in
+        // SessionView stops ticking the relative timer the moment
+        // the desktop session ends. Without this it keeps showing
+        // "n minutes ago" forever, which contradicts the frozen
+        // unlock count and time-on-phone counters.
+        lastOpenedAt = nil
         // Avoid double-firing if the user already tapped the manual
         // "Generate distraction report" button while the session was
         // running.
