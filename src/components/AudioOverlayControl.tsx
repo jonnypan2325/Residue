@@ -29,7 +29,7 @@ const SOUND_TYPES = [
   { id: 'pink-noise', label: 'Pink Noise', desc: 'Balanced, natural' },
   { id: 'white-noise', label: 'White Noise', desc: 'Even frequency spread' },
   { id: 'rain', label: 'Rain', desc: 'Gentle rainfall' },
-  { id: 'cafe', label: 'Cafe', desc: 'Coffee shop ambience' },
+  { id: 'cafe', label: 'Cafe', desc: 'Murmur, steam, and cup clinks' },
   { id: 'binaural', label: 'Binaural', desc: 'Alpha wave focus' },
 ];
 

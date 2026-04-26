@@ -8,7 +8,7 @@ import ProductivityTracker from '@/components/ProductivityTracker';
 import AudioOverlayControl from '@/components/AudioOverlayControl';
 import CorrelationDashboard from '@/components/CorrelationDashboard';
 import StudyBuddyFinder from '@/components/StudyBuddyFinder';
-import ModeSelector from '@/components/ModeSelector';
+import ModeSelector, { type Mode } from '@/components/ModeSelector';
 import AuthControl from '@/components/AuthControl';
 import PhonePairingPanel from '@/components/PhonePairingPanel';
 import AgentPanel from '@/components/AgentPanel';
@@ -27,6 +27,43 @@ import type { AcousticProfile, AcousticStateCorrelation } from '@/types';
 
 const siteTitleClass =
   'font-[family-name:var(--font-economica)] text-4xl font-bold tracking-wide text-[#8c52ff]';
+
+const MODE_THEMES: Record<Mode, {
+  background: string;
+  glow: string;
+  header: string;
+  panel: string;
+  accentText: string;
+}> = {
+  focus: {
+    background: 'bg-[#07111f]',
+    glow: 'bg-[radial-gradient(circle_at_20%_10%,rgba(34,211,238,0.24),transparent_28%),radial-gradient(circle_at_80%_0%,rgba(59,130,246,0.16),transparent_30%)]',
+    header: 'border-cyan-500/20 bg-slate-950/70',
+    panel: 'border-cyan-500/20 shadow-cyan-950/20',
+    accentText: 'text-cyan-300',
+  },
+  calm: {
+    background: 'bg-[#071713]',
+    glow: 'bg-[radial-gradient(circle_at_15%_0%,rgba(16,185,129,0.22),transparent_30%),radial-gradient(circle_at_85%_15%,rgba(45,212,191,0.14),transparent_28%)]',
+    header: 'border-emerald-500/20 bg-emerald-950/30',
+    panel: 'border-emerald-500/20 shadow-emerald-950/20',
+    accentText: 'text-emerald-300',
+  },
+  creative: {
+    background: 'bg-[#16091f]',
+    glow: 'bg-[radial-gradient(circle_at_18%_5%,rgba(217,70,239,0.24),transparent_30%),radial-gradient(circle_at_78%_10%,rgba(124,58,237,0.2),transparent_32%)]',
+    header: 'border-fuchsia-500/20 bg-purple-950/40',
+    panel: 'border-fuchsia-500/20 shadow-fuchsia-950/20',
+    accentText: 'text-fuchsia-300',
+  },
+  social: {
+    background: 'bg-[#1b1205]',
+    glow: 'bg-[radial-gradient(circle_at_18%_8%,rgba(245,158,11,0.24),transparent_30%),radial-gradient(circle_at_80%_0%,rgba(249,115,22,0.18),transparent_28%)]',
+    header: 'border-amber-500/20 bg-orange-950/35',
+    panel: 'border-amber-500/20 shadow-amber-950/20',
+    accentText: 'text-amber-300',
+  },
+};
 
 export default function Home() {
   const auth = useAuth();
@@ -138,7 +175,7 @@ function AuthGateHome() {
 }
 
 function Dashboard({ auth }: { auth: AuthSession }) {
-  const [currentMode, setCurrentMode] = useState<'focus' | 'calm' | 'creative' | 'social'>('focus');
+  const [currentMode, setCurrentMode] = useState<Mode>('focus');
   const [correlations, setCorrelations] = useState<AcousticStateCorrelation[]>([]);
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionDuration, setSessionDuration] = useState(0);
@@ -173,6 +210,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
     stopOverlay,
     setVolume,
     generateAiBed,
+    applyModePreset,
   } = useAudioOverlay();
 
   useEffect(() => {
@@ -318,6 +356,13 @@ function Dashboard({ auth }: { auth: AuthSession }) {
   const recommendation =
     profile && acousticProfile ? getRecommendation(profile, acousticProfile) : null;
 
+  const modeTheme = MODE_THEMES[currentMode];
+
+  const handleModeChange = useCallback((mode: Mode) => {
+    setCurrentMode(mode);
+    applyModePreset(mode);
+  }, [applyModePreset]);
+
   const formatDuration = (s: number) => {
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
@@ -326,9 +371,11 @@ function Dashboard({ auth }: { auth: AuthSession }) {
   };
 
   return (
-    <main className="min-h-screen bg-[#0a0a1a] text-white">
+    <main className={`relative min-h-screen overflow-hidden text-white transition-colors duration-700 ${modeTheme.background}`}>
+      <div className={`pointer-events-none absolute inset-0 transition-all duration-700 ${modeTheme.glow}`} />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(10,10,26,0.04),rgba(10,10,26,0.58))]" />
       {/* Header */}
-      <header className="border-b border-gray-800/50 bg-gray-900/30 backdrop-blur-md sticky top-0 z-50">
+      <header className={`sticky top-0 z-50 border-b backdrop-blur-md transition-colors duration-500 ${modeTheme.header}`}>
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <ResidueLogo className="w-14 h-14 rounded-lg" priority />
@@ -366,7 +413,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      <div className="relative z-10 max-w-7xl mx-auto px-4 py-6 space-y-6">
         {audioError && (
           <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
             <strong className="font-semibold">Microphone unavailable:</strong>{' '}
@@ -375,14 +422,14 @@ function Dashboard({ auth }: { auth: AuthSession }) {
         )}
 
         {/* Mode Selector */}
-        <ModeSelector currentMode={currentMode} onModeChange={setCurrentMode} />
+        <ModeSelector currentMode={currentMode} onModeChange={handleModeChange} />
 
         {/* Main Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column - Audio Analysis */}
           <div className="lg:col-span-2 space-y-6">
             {/* Frequency Visualizer */}
-            <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-6">
+            <div className={`bg-gray-900/80 backdrop-blur-sm rounded-xl border p-6 shadow-2xl transition-colors duration-500 ${modeTheme.panel}`}>
               <h3 className="text-lg font-semibold text-white mb-3">
                 Acoustic Environment
                 {isListening && (
@@ -405,7 +452,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <div className="bg-gray-800/50 rounded-lg p-3">
                     <p className="text-xs text-gray-400">Dominant Frequency</p>
-                    <p className="text-lg font-mono text-cyan-400">
+                    <p className={`text-lg font-mono ${modeTheme.accentText}`}>
                       {Math.round(acousticProfile.dominantFrequency)} Hz
                     </p>
                   </div>
@@ -451,7 +498,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
             <AudioOverlayControl
               overlayState={overlayState}
               onStart={(type, vol, db) =>
-                startOverlay(type as Parameters<typeof startOverlay>[0], vol, db)
+                startOverlay(type as Parameters<typeof startOverlay>[0], vol, db, currentMode)
               }
               onStop={stopOverlay}
               onSetVolume={setVolume}
