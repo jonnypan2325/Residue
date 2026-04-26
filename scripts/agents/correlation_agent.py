@@ -16,13 +16,21 @@ Runs on a 5-minute interval AND on demand via message.
 import os
 import json
 import math
+import requests
 from datetime import datetime, timezone
+from uuid import uuid4
 from pathlib import Path
 from typing import Any, Optional
 
-import requests
 from dotenv import load_dotenv
-from uagents import Agent, Context, Model
+from uagents import Agent, Context, Model, Protocol
+from uagents_core.contrib.protocols.chat import (
+    ChatAcknowledgement,
+    ChatMessage,
+    EndSessionContent,
+    TextContent,
+    chat_protocol_spec,
+)
 
 # Load .env from project root so ASI1_API_KEY / MONGODB_URI are available
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
@@ -679,18 +687,23 @@ def find_matches_for_user(user_id: str, top_k: int = 5) -> list[dict]:
 def create_agent():
     AGENT_PORT = int(os.environ.get("CORRELATION_AGENT_PORT", "8771"))
     AGENT_SEED = os.environ.get("CORRELATION_AGENT_SEED", "residue-correlation-agent-seed-phrase-v1")
+    AGENTVERSE_API_KEY = os.environ.get("AGENTVERSE_API_KEY", "").strip()
 
     # In-memory cache (write-through to MongoDB)
     profiles: dict[str, dict] = {}
 
-    _agent = Agent(
-        name="residue_correlation_agent",
-        port=AGENT_PORT,
-        seed=AGENT_SEED,
-        endpoint=[f"http://localhost:{AGENT_PORT}/submit"],
-        mailbox=True,
-        publish_agent_details=True,
-    )
+    agent_kwargs = {
+        "name": "residue_correlation_agent",
+        "port": AGENT_PORT,
+        "seed": AGENT_SEED,
+        "endpoint": [f"http://localhost:{AGENT_PORT}/submit"],
+        "publish_agent_details": True,
+    }
+    if AGENTVERSE_API_KEY:
+        agent_kwargs["mailbox"] = True
+
+    _agent = Agent(**agent_kwargs)
+    protocol = Protocol(spec=chat_protocol_spec)
 
     print(f"CorrelationAgent address: {_agent.address}")
 
@@ -772,6 +785,73 @@ def create_agent():
         )
         await ctx.send(sender, response)
 
+    @protocol.on_message(ChatMessage)
+    async def handle_chat_message(ctx: Context, sender: str, msg: ChatMessage):
+        await ctx.send(
+            sender,
+            ChatAcknowledgement(timestamp=datetime.now(), acknowledged_msg_id=msg.msg_id),
+        )
+
+        text = ""
+        for item in msg.content:
+            if isinstance(item, TextContent):
+                text += item.text
+
+        # Optional structured chat path for agent-to-agent usage.
+        try:
+            payload = json.loads(text)
+            action = payload.get("action")
+            if action == "correlate":
+                user_id = payload.get("user_id", "unknown")
+                sessions = payload.get("sessions", [])
+                result = build_optimal_profile(json.dumps(sessions))
+                response_text = json.dumps(
+                    {
+                        "action": "correlate_result",
+                        "user_id": user_id,
+                        "result": result,
+                    }
+                )
+            elif action == "profile_query":
+                user_id = payload.get("user_id", "")
+                profile = profiles.get(user_id)
+                response_text = json.dumps(
+                    {
+                        "action": "profile_result",
+                        "user_id": user_id,
+                        "has_profile": profile is not None,
+                        "profile": profile if profile else {},
+                    }
+                )
+            else:
+                response_text = (
+                    "I am the Correlation Agent. Send `{\"action\":\"correlate\", ...}` with session data "
+                    "or `{\"action\":\"profile_query\", \"user_id\":\"...\"}`."
+                )
+        except (json.JSONDecodeError, TypeError):
+            response_text = (
+                "I am the Correlation Agent. I learn optimal dB/EQ preferences from historical sessions "
+                "and return a personalized acoustic profile with confidence and insights."
+            )
+
+        await ctx.send(
+            sender,
+            ChatMessage(
+                timestamp=datetime.utcnow(),
+                msg_id=uuid4(),
+                content=[
+                    TextContent(type="text", text=response_text),
+                    EndSessionContent(type="end-session"),
+                ],
+            ),
+        )
+
+    @protocol.on_message(ChatAcknowledgement)
+    async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
+        _ = (ctx, sender, msg)
+        return
+
+    _agent.include(protocol, publish_manifest=True)
     @_agent.on_message(UpdateProfileMetadata)
     async def handle_update_metadata(ctx: Context, sender: str, msg: UpdateProfileMetadata):
         ctx.logger.info(f"Metadata update from {sender} for user {msg.user_id}")
