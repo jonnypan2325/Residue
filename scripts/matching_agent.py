@@ -164,8 +164,8 @@ def find_matches(request: dict, profiles: list[dict]) -> list[dict]:
     eq_vector = request.get("eq_vector", request.get("eqVector", []))
     user_id = request.get("user_id", request.get("userId", ""))
     location = request.get("location")
-    lat = request.get("lat") or (location.get("lat") if location else None)
-    lng = request.get("lng") or (location.get("lng") if location else None)
+    lat = request.get("lat") if request.get("lat") is not None else (location.get("lat") if location else None)
+    lng = request.get("lng") if request.get("lng") is not None else (location.get("lng") if location else None)
     radius_km = request.get("radius_km", request.get("radiusKm", 50))
     active_only = request.get("active_only", request.get("activeOnly", False))
 
@@ -243,7 +243,7 @@ def main():
 
     agent_kwargs = {
         "name": "residue_matching_agent",
-        "seed": os.environ.get("MATCHING_AGENT_SEED"+"abcdefghi", "residue-matching-agent-seed-v1abcdefghijklmnop"),
+        "seed": os.environ.get("MATCHING_AGENT_SEED", "residue-matching-agent-seed-v1"),
         "port": port + 1,
         "mailbox": True,
         "publish_agent_details": True,

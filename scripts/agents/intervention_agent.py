@@ -200,6 +200,7 @@ def create_agent():
         "name": "residue_intervention_agent",
         "port": AGENT_PORT,
         "seed": AGENT_SEED,
+        "endpoint": [f"http://localhost:{AGENT_PORT}/submit"],
         "publish_agent_details": True,
     }
     if AGENTVERSE_API_KEY:
