@@ -10,6 +10,7 @@ import StudyBuddyFinder from '@/components/StudyBuddyFinder';
 import ModeSelector, { type Mode } from '@/components/ModeSelector';
 import AuthControl from '@/components/AuthControl';
 import PhonePairingPanel from '@/components/PhonePairingPanel';
+import AgentDebugPanel from '@/components/AgentDebugPanel';
 import AgentPanel from '@/components/AgentPanel';
 import ResidueLogo from '@/components/ResidueLogo';
 import { useAudioCapture } from '@/hooks/useAudioCapture';
@@ -469,6 +470,50 @@ function Dashboard({ auth }: { auth: AuthSession }) {
           goal: mode,
         }),
       }).catch(() => { /* MongoDB may be unavailable */ });
+
+      // Call orchestrator agent system for perception + intervention
+      fetch('/api/agents/orchestrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          user_id: userId,
+          goal_mode: mode,
+          acoustic: latestAcousticProfile ? {
+            overall_db: latestAcousticProfile.overallDb,
+            frequency_bands: latestAcousticProfile.frequencyBands.map((b) => b.magnitude),
+            spectral_centroid: latestAcousticProfile.spectralCentroid,
+            dominant_frequency: latestAcousticProfile.dominantFrequency,
+          } : undefined,
+          behavioral: undefined,
+        }),
+      }).then((r) => r.json()).then((data) => {
+        if (data.perception) {
+          (window as never as Record<string, unknown>).__residuePerception = {
+            acoustic: latestAcousticProfile ? { overallDb: latestAcousticProfile.overallDb } : null,
+            behavioral: null,
+            cognitiveState: data.perception.cognitive_state,
+            confidence: data.perception.confidence,
+            timestamp: Date.now(),
+          };
+        }
+        if (data.intervention) {
+          (window as never as Record<string, unknown>).__residueIntervention = {
+            goalMode: mode,
+            bedSelection: data.intervention.bed_selection,
+            eqProfile: data.intervention.eq_profile,
+            volumeTarget: data.intervention.volume_target,
+            bedUrl: null,
+            gapAnalysis: {
+              currentDb: latestAcousticProfile?.overallDb ?? 0,
+              targetDb: data.intervention.gap_analysis?.target_db ?? data.intervention.volume_target ?? 0,
+              delta: data.intervention.gap_analysis?.delta ?? 0,
+              bands: data.intervention.gap_analysis?.bands ?? [],
+            },
+            timestamp: Date.now(),
+          };
+        }
+      }).catch(() => { /* Orchestrator may be unavailable */ });
     }
   }, [auth.user?.uid, currentSnapshot, sessionId]);
 
@@ -712,6 +757,9 @@ function Dashboard({ auth }: { auth: AuthSession }) {
               currentMode={currentMode}
               recommendation={recommendation}
             />
+
+            {/* Agent Debug Panel */}
+            <AgentDebugPanel />
 
             {/* On-Device Processing Badge */}
             <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-4">

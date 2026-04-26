@@ -181,6 +181,7 @@ agent = Agent(**agent_kwargs)
 protocol = Protocol(spec=chat_protocol_spec)
 
 print(f"OrchestratorAgent address: {agent.address}")
+print(f"Agentverse registration: {'enabled' if AGENTVERSE_API_KEY else 'disabled'}")
 
 # Store pending responses (written by async agent handlers, read by HTTP thread)
 pending_responses: dict[str, dict] = {}
@@ -191,6 +192,7 @@ _pending_lock = threading.Lock()
 async def startup(ctx: Context):
     ctx.logger.info(f"OrchestratorAgent started on port {AGENT_PORT}")
     ctx.logger.info(f"Address: {agent.address}")
+    ctx.logger.info(f"Agentverse: {'active' if AGENTVERSE_API_KEY else 'not configured'}")
     ctx.logger.info(f"Perception: {PERCEPTION_ADDRESS}")
     ctx.logger.info(f"Correlation: {CORRELATION_ADDRESS}")
     ctx.logger.info(f"Intervention: {INTERVENTION_ADDRESS}")
@@ -754,6 +756,7 @@ if __name__ == "__main__":
     print(f"Orchestrator uAgent: port {AGENT_PORT}")
     print(f"Orchestrator HTTP:   port {HTTP_PORT}")
     print(f"Agent address:       {agent.address}")
+    print(f"Agentverse:          {'enabled' if AGENTVERSE_API_KEY else 'disabled'}")
     print(f"{'='*50}\n")
 
     agent.run()
