@@ -176,7 +176,7 @@ export async function findUserById(uid: string): Promise<UserRecord | null> {
   return memUsersById.get(uid) ?? null;
 }
 
-export async function createUser(record: UserRecord): Promise<void> {
+export async function createUser(record: UserRecord): Promise<UserRecord> {
   const id = await nextAgentId();
   const normalized = { ...record, email: record.email.trim().toLowerCase(), agentId: id };
   if (mongoEnabled()) {
@@ -184,17 +184,45 @@ export async function createUser(record: UserRecord): Promise<void> {
     const col = await usersCol();
     await col.insertOne(normalized);
     await ensureUserAgent(normalized);
-    return;
+    return normalized;
   }
   memUsers.set(normalized.email, normalized);
   memUsersById.set(normalized._id, normalized);
   await ensureUserAgent(normalized);
+  return normalized;
 }
 
 export async function ensureUserAgent(
   user: Pick<UserRecord, '_id' | 'email' | 'createdAt'> & { agentId?: number },
 ): Promise<UserAgentRecord> {
-  const agentId = user.agentId ?? 1;
+  // If the caller didn't pass an agentId (e.g. the user was loaded from a route
+  // that didn't carry the field through), look up the existing assignment
+  // before falling back to a fresh ID. Falling straight to `1` would collide
+  // with the very first user_agents row created on this database, surfacing as
+  // an E11000 duplicate-key error on the unique `agentId` index.
+  let agentId = user.agentId;
+  if (agentId === undefined || agentId === null) {
+    if (mongoEnabled()) {
+      const userAgentsCol_ = await userAgentsCol();
+      const existingAgent = await userAgentsCol_.findOne({ userId: user._id });
+      if (existingAgent && typeof existingAgent.agentId === 'number') {
+        agentId = existingAgent.agentId;
+      } else {
+        const usersCol_ = await usersCol();
+        const existingUser = await usersCol_.findOne({ _id: user._id });
+        agentId =
+          typeof existingUser?.agentId === 'number'
+            ? existingUser.agentId
+            : await nextAgentId();
+      }
+    } else {
+      const existing = memUserAgents.get(user._id);
+      agentId =
+        existing?.agentId ??
+        memUsersById.get(user._id)?.agentId ??
+        (await nextAgentId());
+    }
+  }
   const poolIndex = (agentId - 1) % POOL_SIZE;
   const agentSet = getAgentSet(poolIndex);
   const now = Date.now();
@@ -254,7 +282,7 @@ export async function ensureUserAgent(
 }
 
 export async function ensureUserData(
-  user: Pick<UserRecord, '_id' | 'email' | 'createdAt'>,
+  user: Pick<UserRecord, '_id' | 'email' | 'createdAt'> & { agentId?: number },
 ): Promise<UserDataRecord> {
   const now = Date.now();
   const displayName = user.email.split('@')[0] || 'Residue user';
@@ -340,7 +368,9 @@ export async function ensureUserData(
   return defaults;
 }
 
-export async function recordUserLogin(user: Pick<UserRecord, '_id' | 'email' | 'createdAt'>): Promise<void> {
+export async function recordUserLogin(
+  user: Pick<UserRecord, '_id' | 'email' | 'createdAt'> & { agentId?: number },
+): Promise<void> {
   const now = Date.now();
   await ensureUserData(user);
   if (mongoEnabled()) {

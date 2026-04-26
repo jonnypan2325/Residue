@@ -45,9 +45,9 @@ export async function POST(req: NextRequest) {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    await createUser(user);
-    const userData = await ensureUserData(user);
-    await recordUserLogin(user);
+    const created = await createUser(user);
+    const userData = await ensureUserData(created);
+    await recordUserLogin(created);
     const token = createAuthToken(uid, normalized);
     return NextResponse.json({
       token,
