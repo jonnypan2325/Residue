@@ -479,18 +479,18 @@ function Dashboard({ auth }: { auth: AuthSession }) {
           session_id: sessionId,
           user_id: 'user-1',
           goal_mode: currentMode,
-          acoustic: acousticProfile ? {
-            overall_db: acousticProfile.overallDb,
-            frequency_bands: acousticProfile.frequencyBands.map((b) => b.magnitude),
-            spectral_centroid: acousticProfile.spectralCentroid,
-            dominant_frequency: acousticProfile.dominantFrequency,
+          acoustic: latestAcousticProfile ? {
+            overall_db: latestAcousticProfile.overallDb,
+            frequency_bands: latestAcousticProfile.frequencyBands.map((b) => b.magnitude),
+            spectral_centroid: latestAcousticProfile.spectralCentroid,
+            dominant_frequency: latestAcousticProfile.dominantFrequency,
           } : undefined,
           behavioral: undefined,
         }),
       }).then((r) => r.json()).then((data) => {
         if (data.perception) {
           (window as never as Record<string, unknown>).__residuePerception = {
-            acoustic: acousticProfile ? { overallDb: acousticProfile.overallDb } : null,
+            acoustic: latestAcousticProfile ? { overallDb: latestAcousticProfile.overallDb } : null,
             behavioral: null,
             cognitiveState: data.perception.cognitive_state,
             confidence: data.perception.confidence,
@@ -505,7 +505,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
             volumeTarget: data.intervention.volume_target,
             bedUrl: null,
             gapAnalysis: {
-              currentDb: acousticProfile?.overallDb ?? 0,
+              currentDb: latestAcousticProfile?.overallDb ?? 0,
               targetDb: data.intervention.volume_target ?? 0,
               delta: 0,
               bands: [],
