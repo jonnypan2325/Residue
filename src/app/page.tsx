@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import FrequencyVisualizer from '@/components/FrequencyVisualizer';
 import DbMeter from '@/components/DbMeter';
@@ -8,7 +7,6 @@ import ProductivityTracker from '@/components/ProductivityTracker';
 import AudioOverlayControl from '@/components/AudioOverlayControl';
 import CorrelationDashboard from '@/components/CorrelationDashboard';
 import StudyBuddyFinder from '@/components/StudyBuddyFinder';
-import AgentMatchPanel from '@/components/AgentMatchPanel';
 import ModeSelector, { type Mode } from '@/components/ModeSelector';
 import AuthControl from '@/components/AuthControl';
 import PhonePairingPanel from '@/components/PhonePairingPanel';
@@ -66,6 +64,39 @@ const MODE_THEMES: Record<Mode, {
   },
 };
 
+type DashboardTab = 'session' | 'buddy';
+
+type CaptureAccessState = {
+  micReady: boolean;
+  screenReady: boolean;
+  micError: string | null;
+  screenError: string | null;
+};
+
+const INITIAL_CAPTURE_ACCESS: CaptureAccessState = {
+  micReady: false,
+  screenReady: false,
+  micError: null,
+  screenError: null,
+};
+
+const DASHBOARD_TABS: Array<{
+  id: DashboardTab;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: 'session',
+    label: 'Session',
+    description: 'Capture, focus tracking, acoustic overlays',
+  },
+  {
+    id: 'buddy',
+    label: 'Buddy',
+    description: 'Agent matching and study partner tools',
+  },
+];
+
 export default function Home() {
   const auth = useAuth();
 
@@ -107,18 +138,18 @@ function AuthGateHome() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Link
-              href="/login"
+            <a
+              href="/auth/login"
               className="text-xs px-3 py-1.5 rounded-lg border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
             >
               Sign in
-            </Link>
-            <Link
-              href="/signup"
+            </a>
+            <a
+              href="/auth/login?screen_hint=signup"
               className="text-xs px-3 py-1.5 rounded-lg bg-linear-to-r from-cyan-500 to-purple-600 text-white hover:opacity-90"
             >
               Create account
-            </Link>
+            </a>
           </div>
         </div>
       </header>
@@ -137,18 +168,18 @@ function AuthGateHome() {
               and adapts your workspace with personalized audio overlays.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link
-                href="/signup"
+              <a
+                href="/auth/login?screen_hint=signup"
                 className="px-5 py-3 rounded-xl bg-linear-to-r from-cyan-500 to-purple-600 text-sm font-semibold text-white hover:opacity-90"
               >
                 Create account
-              </Link>
-              <Link
-                href="/login"
+              </a>
+              <a
+                href="/auth/login"
                 className="px-5 py-3 rounded-xl border border-gray-700 text-sm font-semibold text-gray-200 hover:bg-gray-800/70"
               >
                 Sign in
-              </Link>
+              </a>
             </div>
           </div>
 
@@ -177,8 +208,11 @@ function AuthGateHome() {
 
 function Dashboard({ auth }: { auth: AuthSession }) {
   const [currentMode, setCurrentMode] = useState<Mode>('focus');
+  const [activeTab, setActiveTab] = useState<DashboardTab>('session');
   const [correlations, setCorrelations] = useState<AcousticStateCorrelation[]>([]);
   const [sessionActive, setSessionActive] = useState(false);
+  const [sessionStartPending, setSessionStartPending] = useState(false);
+  const [captureAccess, setCaptureAccess] = useState<CaptureAccessState>(INITIAL_CAPTURE_ACCESS);
   const [sessionDuration, setSessionDuration] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const acousticProfileRef = useRef<AcousticProfile | null>(null);
@@ -200,6 +234,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
     currentSnapshot,
     productivityHistory,
     screenPreview,
+    error: screenError,
     startTracking,
     stopTracking,
     submitSelfReport,
@@ -243,10 +278,10 @@ function Dashboard({ auth }: { auth: AuthSession }) {
     };
   }, [auth.user?.uid]);
 
-  const handleStartSession = useCallback(async () => {
-    await startListening();
+  const beginValidatedSession = useCallback(() => {
     const newSessionId = `session-${Date.now()}`;
     setSessionActive(true);
+    setSessionStartPending(false);
     setSessionDuration(0);
     setSessionId(newSessionId);
     phone.reset();
@@ -272,13 +307,103 @@ function Dashboard({ auth }: { auth: AuthSession }) {
         /* MongoDB may be unavailable; phone falls back to manual pairing. */
       });
     }
-  }, [startListening, phone, auth.token, currentMode]);
+  }, [phone, auth.token, currentMode]);
+
+  const handleStartSession = useCallback(async () => {
+    if (sessionActive || sessionStartPending) return;
+
+    setSessionStartPending(true);
+    setCaptureAccess(INITIAL_CAPTURE_ACCESS);
+
+    const [micResult, screenResult] = await Promise.all([
+      startListening(),
+      startTracking(),
+    ]);
+
+    const nextAccess: CaptureAccessState = {
+      micReady: micResult.ok,
+      screenReady: screenResult.ok,
+      micError: micResult.ok ? null : micResult.message,
+      screenError: screenResult.ok ? null : screenResult.message,
+    };
+
+    setCaptureAccess(nextAccess);
+
+    if (nextAccess.micReady && nextAccess.screenReady) {
+      beginValidatedSession();
+      return;
+    }
+
+    setSessionStartPending(false);
+  }, [
+    beginValidatedSession,
+    sessionActive,
+    sessionStartPending,
+    startListening,
+    startTracking,
+  ]);
+
+  const handleRetryMic = useCallback(async () => {
+    if (sessionActive || sessionStartPending) return;
+
+    setSessionStartPending(true);
+    const result = await startListening();
+    const nextAccess: CaptureAccessState = {
+      ...captureAccess,
+      micReady: result.ok,
+      micError: result.ok ? null : result.message,
+    };
+
+    setCaptureAccess(nextAccess);
+
+    if (nextAccess.micReady && nextAccess.screenReady) {
+      beginValidatedSession();
+      return;
+    }
+
+    setSessionStartPending(false);
+  }, [
+    beginValidatedSession,
+    captureAccess,
+    sessionActive,
+    sessionStartPending,
+    startListening,
+  ]);
+
+  const handleRetryScreen = useCallback(async () => {
+    if (sessionActive || sessionStartPending) return;
+
+    setSessionStartPending(true);
+    const result = await startTracking();
+    const nextAccess: CaptureAccessState = {
+      ...captureAccess,
+      screenReady: result.ok,
+      screenError: result.ok ? null : result.message,
+    };
+
+    setCaptureAccess(nextAccess);
+
+    if (nextAccess.micReady && nextAccess.screenReady) {
+      beginValidatedSession();
+      return;
+    }
+
+    setSessionStartPending(false);
+  }, [
+    beginValidatedSession,
+    captureAccess,
+    sessionActive,
+    sessionStartPending,
+    startTracking,
+  ]);
 
   const handleStopSession = useCallback(() => {
     stopListening();
     stopTracking();
     stopOverlay();
     setSessionActive(false);
+    setSessionStartPending(false);
+    setCaptureAccess(INITIAL_CAPTURE_ACCESS);
 
     // Notify the backend so user_data.studyStatus.currentlyStudying flips
     // to false. The iOS companion polls this flag to auto-trigger the
@@ -371,67 +496,148 @@ function Dashboard({ auth }: { auth: AuthSession }) {
     return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
   };
 
+  const micIssue = captureAccess.micError ?? audioError;
+  const screenIssue = captureAccess.screenError ?? screenError;
+  const hasCaptureIssue = !sessionActive && Boolean(micIssue || screenIssue);
+
   return (
     <main className={`relative min-h-screen overflow-hidden text-white transition-colors duration-700 ${modeTheme.background}`}>
       <div className={`pointer-events-none absolute inset-0 transition-all duration-700 ${modeTheme.glow}`} />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(10,10,26,0.04),rgba(10,10,26,0.58))]" />
       {/* Header */}
       <header className={`sticky top-0 z-50 border-b backdrop-blur-md transition-colors duration-500 ${modeTheme.header}`}>
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <ResidueLogo className="w-14 h-14 rounded-lg" priority />
-            <div>
-              <h1 className={siteTitleClass}>RESIDUE</h1>
-              {/* <p className="text-sm text-gray-500">Personalized Acoustic Intelligence</p> */}
-              <p className="text-[10px] text-gray-600 mt-0.5">ZETIC · ElevenLabs · Fetch.ai · MongoDB · Cognition · Web Audio</p>
+        <div className="max-w-7xl mx-auto px-4 py-3 space-y-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-3">
+              <ResidueLogo className="w-14 h-14 rounded-lg" priority />
+              <div>
+                <h1 className={siteTitleClass}>RESIDUE</h1>
+                {/* <p className="text-sm text-gray-500">Personalized Acoustic Intelligence</p> */}
+                <p className="text-[10px] text-gray-600 mt-0.5">ZETIC · ElevenLabs · Fetch.ai · MongoDB · Cognition · Web Audio</p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+              <AuthControl
+                ready={auth.ready}
+                user={auth.user}
+              />
+              {sessionActive && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 rounded-lg">
+                  <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                  <span className="text-sm font-mono text-gray-300">
+                    {formatDuration(sessionDuration)}
+                  </span>
+                </div>
+              )}
+              <button
+                onClick={sessionActive ? handleStopSession : handleStartSession}
+                disabled={sessionStartPending}
+                className={`px-5 py-2 rounded-lg font-medium text-sm transition-all ${
+                  sessionActive
+                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30'
+                    : sessionStartPending
+                    ? 'cursor-wait bg-gray-700/70 text-gray-300'
+                    : 'bg-linear-to-r from-cyan-500 to-purple-600 text-white hover:opacity-90'
+                }`}
+              >
+                {sessionActive ? 'End Session' : sessionStartPending ? 'Checking Access...' : 'Start Session'}
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <AuthControl
-              ready={auth.ready}
-              user={auth.user}
-              onLogout={auth.logout}
-            />
-            {sessionActive && (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 rounded-lg transition-all duration-300">
-                <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                <span className="text-sm font-mono text-gray-300">
-                  {formatDuration(sessionDuration)}
-                </span>
-              </div>
-            )}
-            <button
-              onClick={sessionActive ? handleStopSession : handleStartSession}
-              className={`px-5 py-2 rounded-lg font-medium text-sm transition-all ${
-                sessionActive
-                  ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30'
-                  : 'bg-linear-to-r from-cyan-500 to-purple-600 text-white hover:opacity-90'
-              }`}
-            >
-              {sessionActive ? 'End Session' : 'Start Session'}
-            </button>
-          </div>
+          <nav
+            aria-label="Dashboard sections"
+            className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-gray-950/40 p-1 sm:inline-grid sm:min-w-[520px]"
+          >
+            {DASHBOARD_TABS.map((tab) => {
+              const selected = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`rounded-xl px-4 py-3 text-left transition-all ${
+                    selected
+                      ? 'bg-white/10 text-white shadow-lg shadow-black/20 ring-1 ring-white/15'
+                      : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                  }`}
+                >
+                  <span className="block text-sm font-semibold">{tab.label}</span>
+                  <span className="mt-0.5 hidden text-xs sm:block">{tab.description}</span>
+                </button>
+              );
+            })}
+          </nav>
         </div>
       </header>
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 py-6 space-y-6">
-        {audioError && (
-          <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-            <strong className="font-semibold">Microphone unavailable:</strong>{' '}
-            {audioError}
+        {sessionStartPending && !sessionActive && (
+          <div className="rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+            <strong className="font-semibold">Checking session inputs:</strong>{' '}
+            Pick your microphone, share your entire screen, and make a little sound so Residue can verify both inputs.
           </div>
         )}
 
-        {/* Mode Selector */}
-        <ModeSelector currentMode={currentMode} onModeChange={handleModeChange} />
+        {hasCaptureIssue && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="font-semibold">Session needs the correct inputs before it can start.</p>
+                <p className="mt-1 text-xs text-amber-100/75">
+                  Retry the failed input below. The session will start automatically once the mic has signal and the full screen is shared.
+                </p>
+              </div>
+            </div>
 
-        {/* Main Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {micIssue && (
+                <div className="rounded-lg border border-amber-400/30 bg-gray-950/30 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Microphone</p>
+                  <p className="mt-2 text-sm text-amber-50">{micIssue}</p>
+                  <button
+                    type="button"
+                    onClick={handleRetryMic}
+                    disabled={sessionStartPending}
+                    className="mt-3 rounded-lg bg-amber-400/20 px-3 py-2 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-400/30 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Choose microphone again
+                  </button>
+                </div>
+              )}
+
+              {screenIssue && (
+                <div className="rounded-lg border border-amber-400/30 bg-gray-950/30 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">Screen Sharing</p>
+                  <p className="mt-2 text-sm text-amber-50">{screenIssue}</p>
+                  <button
+                    type="button"
+                    onClick={handleRetryScreen}
+                    disabled={sessionStartPending}
+                    className="mt-3 rounded-lg bg-amber-400/20 px-3 py-2 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-400/30 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Share entire screen again
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'session' ? (
+          <>
+            {/* Mode Selector */}
+            <ModeSelector currentMode={currentMode} onModeChange={handleModeChange} />
+
+            {/* Main Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column - Audio Analysis */}
           <div className="lg:col-span-2 space-y-6">
             {/* Frequency Visualizer */}
-            <div className={`bg-gray-900/80 backdrop-blur-sm rounded-xl border p-5 shadow-2xl transition-colors duration-500 ${modeTheme.panel}`}>
+            <div className={`bg-gray-900/80 backdrop-blur-sm rounded-xl border p-6 shadow-2xl transition-colors duration-500 ${modeTheme.panel}`}>
               <h3 className="text-lg font-semibold text-white mb-3">
                 Acoustic Environment
                 {isListening && (
@@ -474,7 +680,6 @@ function Dashboard({ auth }: { auth: AuthSession }) {
               history={productivityHistory}
               screenPreview={screenPreview}
               isTracking={isTracking}
-              onStartTracking={startTracking}
               onStopTracking={stopTracking}
               onSelfReport={submitSelfReport}
               phonePenalty={phone.state?.productivityPenalty ?? 0}
@@ -484,7 +689,7 @@ function Dashboard({ auth }: { auth: AuthSession }) {
             <CorrelationDashboard profile={profile} correlations={correlations} />
           </div>
 
-          {/* Right Column - Controls & Social */}
+          {/* Right Column - Session Controls */}
           <div className="space-y-6">
             {/* Phone Companion */}
             <PhonePairingPanel
@@ -509,22 +714,6 @@ function Dashboard({ auth }: { auth: AuthSession }) {
               recommendation={recommendation}
             />
 
-            {/* Agent Network */}
-            <AgentPanel token={auth.token} userId={auth.user?.uid ?? null} />
-
-            {/* Cross-Agent Matching (CorrelationAgent) */}
-            <AgentMatchPanel
-              token={auth.token}
-              userId={auth.user?.uid ?? null}
-            />
-
-            {/* Study Buddy Finder */}
-            <StudyBuddyFinder
-              userId={auth.user?.uid}
-              userOptimalRange={profile?.optimalDbRange}
-              eqVector={studyBuddyEqVector}
-            />
-
             {/* On-Device Processing Badge */}
             <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800 p-5">
               <div className="flex items-center gap-3">
@@ -538,7 +727,44 @@ function Dashboard({ auth }: { auth: AuthSession }) {
               </div>
             </div>
           </div>
-        </div>
+            </div>
+          </>
+        ) : (
+          <section className="space-y-6">
+            <div className={`rounded-2xl border bg-gray-900/80 p-6 shadow-2xl backdrop-blur-sm transition-colors duration-500 ${modeTheme.panel}`}>
+              <p className="text-xs uppercase tracking-[0.3em] text-purple-300/80">Study buddies</p>
+              <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <h2 className="text-3xl font-bold text-white">Find someone who studies like you.</h2>
+                  <p className="mt-2 text-sm text-gray-400">
+                    Start with matches. If you want help, copy an Agent ID and open ASI:One.
+                  </p>
+                </div>
+                {sessionActive && (
+                  <div className="rounded-xl border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-200">
+                    Current session is still running: {formatDuration(sessionDuration)}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+              <div>
+                {/* Study Buddy Finder */}
+                <StudyBuddyFinder
+                  token={auth.token}
+                  userId={auth.user?.uid}
+                  eqVector={studyBuddyEqVector}
+                />
+              </div>
+
+              <div>
+                {/* AI Helper Chat */}
+                <AgentPanel token={auth.token} userId={auth.user?.uid ?? null} />
+              </div>
+            </div>
+          </section>
+        )}
       </div>
     </main>
   );
