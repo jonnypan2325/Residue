@@ -2,11 +2,26 @@
 
 import { useCallback, useRef, useState } from 'react';
 
-import type {
-  CrossAgentMatch,
-  CrossMatchResponse,
-} from '@/app/api/agents/cross-match/route';
+interface CrossAgentMatch {
+  candidate_id: string;
+  candidate_name: string;
+  agent_address: string | null;
+  compatibility_score: number;
+  emotional_eq_score: number;
+  communication_score_db: number;
+  sound_wave_score: number;
+  reasoning: string;
+}
 
+interface CrossMatchResponse {
+  matches: CrossAgentMatch[];
+  activity?: Array<{
+    timestamp: string;
+    channel: 'client' | 'correlation' | 'profile-exchange' | 'asi1' | 'system';
+    message: string;
+  }>;
+  error?: string;
+}
 interface AgentMatchPanelProps {
   token: string | null;
   userId: string | null;
