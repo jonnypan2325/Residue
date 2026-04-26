@@ -243,7 +243,7 @@ def main():
 
     agent_kwargs = {
         "name": "residue_matching_agent",
-        "seed": os.environ.get("MATCHING_AGENT_SEED"+"abcdefghi", "residue-matching-agent-seed-v1abcdefghijklmnop"),
+        "seed": os.environ.get("MATCHING_AGENT_SEED", "residue-matching-agent-seed-v1"),
         "port": port + 1,
         "mailbox": True,
         "publish_agent_details": True,
