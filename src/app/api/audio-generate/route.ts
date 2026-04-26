@@ -28,22 +28,22 @@ function generateAcousticRecommendation(
     volumeMultiplier: number;
   }> = {
     focus: {
-      preferredSounds: ['brown-noise', 'rain', 'binaural'],
+      preferredSounds: ['brown-noise', 'binaural'],
       frequencyEmphasis: 'low-mid',
       volumeMultiplier: 0.6,
     },
     calm: {
-      preferredSounds: ['pink-noise', 'rain'],
+      preferredSounds: ['rain', 'brown-noise'],
       frequencyEmphasis: 'sub-bass',
       volumeMultiplier: 0.4,
     },
     creative: {
-      preferredSounds: ['cafe', 'pink-noise'],
+      preferredSounds: ['cafe', 'white-noise'],
       frequencyEmphasis: 'mid',
       volumeMultiplier: 0.7,
     },
     social: {
-      preferredSounds: ['white-noise', 'cafe'],
+      preferredSounds: ['cafe', 'white-noise'],
       frequencyEmphasis: 'presence',
       volumeMultiplier: 0.5,
     },

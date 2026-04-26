@@ -1,5 +1,7 @@
 'use client';
 
+import { AUDIO_BEDS } from '@/data/audioBeds';
+
 interface OverlayState {
   isPlaying: boolean;
   soundType: string;
@@ -23,15 +25,6 @@ interface Props {
     confidence: number;
   } | null;
 }
-
-const SOUND_TYPES = [
-  { id: 'brown-noise', label: 'Brown Noise', desc: 'Deep, warm rumble' },
-  { id: 'pink-noise', label: 'Pink Noise', desc: 'Balanced, natural' },
-  { id: 'white-noise', label: 'White Noise', desc: 'Even frequency spread' },
-  { id: 'rain', label: 'Rain', desc: 'Gentle rainfall' },
-  { id: 'cafe', label: 'Cafe', desc: 'Coffee shop ambience' },
-  { id: 'binaural', label: 'Binaural', desc: 'Alpha wave focus' },
-];
 
 export default function AudioOverlayControl({
   overlayState,
@@ -107,7 +100,7 @@ export default function AudioOverlayControl({
               <p className="text-xs text-gray-400 mt-0.5">
                 {overlayState.aiGenerating
                   ? 'Generating personalized soundscape...'
-                  : 'Generated from your learned acoustic profile'}
+                  : 'Optional generated bed from your learned acoustic profile'}
               </p>
             </div>
             {overlayState.aiGenerating && (
@@ -126,14 +119,15 @@ export default function AudioOverlayControl({
 
       <div className="relative flex items-center gap-3">
         <div className="flex-1 border-t border-gray-700" />
-        <span className="text-xs text-gray-500">or use synthesized</span>
+        <span className="text-xs text-gray-500">or use permanent audio beds</span>
         <div className="flex-1 border-t border-gray-700" />
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
-        {SOUND_TYPES.map((sound) => (
+      <div className="grid grid-cols-2 gap-2">
+        {AUDIO_BEDS.map((sound) => (
           <button
             key={sound.id}
+            title={`${sound.sourceTitle} - ${sound.license} - ${sound.duration}`}
             onClick={() => {
               if (overlayState.isPlaying && overlayState.soundType === sound.id) {
                 onStop();
@@ -149,6 +143,7 @@ export default function AudioOverlayControl({
           >
             <p className="text-sm font-medium text-white">{sound.label}</p>
             <p className="text-xs text-gray-400">{sound.desc}</p>
+            <p className="mt-1 text-[10px] text-gray-600">{sound.duration} · {sound.license}</p>
           </button>
         ))}
       </div>

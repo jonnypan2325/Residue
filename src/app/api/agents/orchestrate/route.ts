@@ -163,7 +163,7 @@ Respond in JSON: {"cognitive_state": "focused"|"distracted"|"idle"|"transitionin
     }
 
     // Step 2: ASI1-Mini Intervention
-    const bedOptions = ['brown-noise', 'pink-noise', 'white-noise', 'rain', 'cafe', 'binaural'];
+    const bedOptions = ['brown-noise', 'white-noise', 'rain', 'cafe', 'binaural'];
     const interventionResult = await callASI1Mini(
       `You are Residue's Intervention Agent. Given cognitive state and goal, pick the best ambient bed.
 Available: ${bedOptions.join(', ')}
