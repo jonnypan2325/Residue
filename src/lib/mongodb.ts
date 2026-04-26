@@ -69,6 +69,11 @@ export async function getPhoneEventsCollection() {
   return db.collection('phone_events');
 }
 
+export async function getBuddyConnectionsCollection() {
+  const db = await getDb();
+  return db.collection('buddy_connections');
+}
+
 export async function ensureMongoIndexes(): Promise<void> {
   if (!indexSetup) {
     indexSetup = (async () => {
@@ -88,6 +93,11 @@ export async function ensureMongoIndexes(): Promise<void> {
         db.collection('phone_pairings').createIndex({ sessionId: 1 }),
         db.collection('phone_events').createIndex({ sessionId: 1, timestamp: 1 }),
         db.collection('phone_reports').createIndex({ sessionId: 1 }, { unique: true }),
+        db.collection('buddy_connections').createIndex({ userId: 1 }),
+        db.collection('buddy_connections').createIndex(
+          { userId: 1, buddyId: 1 },
+          { unique: true },
+        ),
       ]);
     })();
   }
