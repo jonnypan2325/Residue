@@ -9,7 +9,6 @@ import AudioOverlayControl from '@/components/AudioOverlayControl';
 import CorrelationDashboard from '@/components/CorrelationDashboard';
 import StudyBuddyFinder from '@/components/StudyBuddyFinder';
 import AgentMatchPanel from '@/components/AgentMatchPanel';
-import ModeSelector from '@/components/ModeSelector';
 import ModeSelector, { type Mode } from '@/components/ModeSelector';
 import AuthControl from '@/components/AuthControl';
 import PhonePairingPanel from '@/components/PhonePairingPanel';
